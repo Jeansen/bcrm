@@ -42,7 +42,7 @@ declare LOG_PATH='/tmp'
 declare F_LOG="$LOG_PATH/bcrm.log"
 
 declare SCHROOT_HOME=/tmp/dbs
-declare BACKUP_FOLDER=/tmp/bcrm/backup
+declare BACKUP_FOLDER=/var/bcrm/backup
 declare SCRIPTNAME=$(basename "$0")
 declare SCRIPTPATH=$(dirname "$0")
 declare PIDFILE="/var/run/$SCRIPTNAME"
@@ -262,6 +262,7 @@ usage() { #{{{
 # -y = SUCCESS (✔)
 # -n = FAIL (✘)
 # -i = INFO (i)
+# -I = Mark text (-t) for Input
 # -u: Update a message indicator, e.g. from status CURRENT to SUCCESS.
 message() { #{{{
     local OPTIND
@@ -330,6 +331,22 @@ message() { #{{{
     tput civis
     exec 3>&1          #save stdout
     exec >>$F_LOG 2>&1 #again all to the log
+} #}}}
+
+spinner() { #{{{
+    pid=$1
+    msg="$2"
+    stat="$3"
+
+    message -u -c -t "$msg [ $stat ]"
+    sleep 2
+    [[ $stat == scan ]] && sp='   s  sc scascansca sc  s   sc  sca scan sca  sc'
+    [[ $stat == sync ]] && sp='   s  sy synsyncsyn sy  s   sy  syn sync syn  sy'
+    while kill -0 $pid 2>/dev/null; do
+        message -u -c -t "$msg [ ${sp:0:4} ]"
+        sp=${sp#????}${sp:0:4}
+        sleep 0.1
+    done
 } #}}}
 #}}}
 
@@ -1643,8 +1660,11 @@ To_file() { #{{{
         fi
 
         if [[ $INTERACTIVE == true ]]; then
-            message -u -c -t "Creating backup for $sdev [ scan ]"
-            local size=$(cd $mpnt; du --bytes $excl -s -x $mpnt | awk '{print $1}')
+            ipc=$(mktemp)
+            du --bytes $excl -s -x $mpnt | awk '{print $1}' > $ipc &
+            spinner $! "Creating backup for $sdev" "scan"
+            local size=$(cat $ipc)
+
             if [[ $SPLIT == true ]]; then
                 cmd="$cmd -Scpvf - . 2>$LOG_PATH/bcrm.${file}.log | pv --interval 0.5 --numeric -s $size | split -b 1G - $file"
             else
@@ -1659,9 +1679,9 @@ To_file() { #{{{
 
             while read -r e; do
                 [[ $e -ge 100 ]] && e=100 #Just a precaution
-                message -u -c -t "Creating backup for $sdev [ $(printf '%02d%%' $e) ]"
+                message -u -c -t "Creating backup for $sdev [ $(printf '%3d%%' $e) ]"
             done < "$FIFO"
-            message -u -c -t "Creating backup for $sdev [ $(printf '%02d%%' 100) ]" #In case we very faster than the update interval of pv, especially when at 98-99%.
+            message -u -c -t "Creating backup for $sdev [ $(printf '%3d%%' 100) ]" #In case we very faster than the update interval of pv, especially when at 98-99%.
         else
             message -c -t "Creating backup for $sdev"
             if [[ $SPLIT == true ]]; then
@@ -2043,10 +2063,10 @@ Clone() { #{{{
                     [[ $fs == vfat ]] && cmd="fakeroot $cmd"
                     while read -r e; do
                         [[ $e -ge 100 ]] && e=100
-                        message -u -c -t "Restoring $dev ($mnt) to $ddev [ $(printf '%02d%%' $e) ]"
+                        message -u -c -t "Restoring $dev ($mnt) to $ddev [ $(printf '%3d%%' $e) ]"
                         #Note that with pv stderr holds the current percentage value!
                     done < <((eval "$cmd") 2>&1)
-                    message -u -c -t "Restoring $dev ($mnt) to $ddev [ $(printf '%02d%%' 100) ]"
+                    message -u -c -t "Restoring $dev ($mnt) to $ddev [ $(printf '%3d%%' 100) ]"
                 else
                     message -c -t "Restoring $dev ($mnt) to $ddev"
                     cmd="$cmd < ${SRC}/${file}"
@@ -2101,17 +2121,19 @@ Clone() { #{{{
             fi
 
             if [[ $INTERACTIVE == true ]]; then
-                message -u -c -t "Cloning $sdev to $ddev [ scan ]"
-                local size=$(find "$smpnt" -xdev -type f,d,l -not \( ${cmd//--exclude=/-path } \) | wc -l)
+                ipc=$(mktemp)
+                find "$smpnt" -xdev -type f,d,l -not \( ${cmd//--exclude=/-path } \) | wc -l > $ipc &
+                spinner $! "Cloning $sdev to $ddev" "scan"
+                local size=$(cat $ipc)
 
                 {
                     local e=
                     while read -r e; do
                         [[ $e -ge 100 ]] && e=100
-                        message -u -c -t "Cloning $sdev to $ddev [ $(printf '%02d%%' $e) ]"
+                        message -u -c -t "Cloning $sdev to $ddev [ $(printf '%3d%%' $e) ]"
                     done < <(rsync -vaSXxH --log-file $LOG_PATH/bcrm.${sdev//\//_}_${ddev//\//_}.log $cmd "$smpnt/" "$dmpnt" | pv --interval 0.5 --numeric -le -s "$size" 2>&1 >/dev/null)
                 }
-                message -u -c -t "Cloning $sdev to $ddev [ $(printf '%02d%%' 100) ]"
+                message -u -c -t "Cloning $sdev to $ddev [ $(printf '%3d%%' 100) ]"
             else
                 message -c -t "Cloning $sdev to $ddev"
                 rsync -aSXxH $cmd "$smpnt/" "$dmpnt"
@@ -2553,10 +2575,6 @@ Main() { #{{{
     flock -n 200 || exit_ 1 "Another instance is already running!"
     pid=$$
     echo $pid 1>&200
-
-
-    PKGS=()
-
 
     while (( $# )); do
         ! [[ $1 =~ ^- ]] && exit_ 1 "Invalid argument $1"
