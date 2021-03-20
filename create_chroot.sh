@@ -8,9 +8,9 @@ locales	locales/locales_to_be_generated	select	en_US.UTF-8 UTF-8"
 [[ "$(id -u)" != 0 ]] && exec sudo "$0" "$@"
 
 Main() {
-    local target="$1"
-    local code_name="$2"
-    local proxy="$3"
+    local target=$(mktemp -d)
+    local code_name="$1"
+    local proxy="$2"
 
     hash debootstrap || exit 1
     [[ -n $proxy ]] && export http_proxy=$proxy
