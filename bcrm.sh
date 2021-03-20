@@ -24,6 +24,7 @@ export LVM_SUPPRESS_FD_WARNINGS=true
 export XZ_OPT= #Make sure no compression is in place, can be set with -z. See Main()
 [[ $TERM == unknown || $TERM == dumb ]] && export TERM=xterm
 set -o pipefail
+shopt -s globstar 
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
@@ -103,6 +104,7 @@ declare VG_SRC_NAME_CLONE=""
 declare ENCRYPT_PWD=""
 declare HOST_NAME=""
 declare LVM_EXPAND="" #Name of the LV to expand.
+declare EFI_BOOT_IMAGE=""
 
 declare UEFI=false
 declare CREATE_LOOP_DEV=false
@@ -112,6 +114,7 @@ declare IS_CHECKSUM=false
 declare SCHROOT=false
 declare IS_CLEANUP=true
 declare ALL_TO_LVM=false
+declare UPDATE_EFI_BOOT=false
 
 declare MIN_RESIZE=2048 #In 1M units
 declare SWAP_SIZE=-1    #Values < 0 mean no change/ignore
@@ -170,7 +173,7 @@ echo_() { #{{{
 
 logmsg() { #{{{
     local d=$(date --rfc-3339=seconds)
-    printf "\n[BCRM] ${d}\t${1}\n\n" >> $F_LOG
+    printf "\n%s\t%s\n\n" "[BCRM] ${d}" "${1}" >> $F_LOG
 } #}}}
 
 usage() { #{{{
@@ -221,6 +224,11 @@ usage() { #{{{
     printf "  %-3s %-30s %s\n"   "   " ""                        "This option can be specified multiple times."
     printf "  %-3s %-30s %s\n"   "   " "--exclude-folder"        "Exclude a folder from source partition or backup."
     printf "  %-3s %-30s %s\n"   "   " ""                        "This option can be specified multiple times."
+    printf "  %-3s %-30s %s\n"   "   " "--update-efi-boot"       "Add a new Entry to EFI NVRAM and make the cloned disk the first boot device."
+    printf "  %-3s %-30s %s\n"   "   " ""                        "Use this option if you plan to replace an existing disk with the clone."
+    printf "  %-3s %-30s %s\n"   "   " ""                        "Especially if you plan to keep the original disk installed, but the system should"
+    printf "  %-3s %-30s %s\n"   "   " ""                        "boot from the clone." 
+    printf "  %-3s %-30s %s\n"   "   " "--efi-boot-iamge"        "Path to an existing EFI image, e.g. '\EFI\debian\grub.efi'"
     printf "  %-3s %-30s %s\n"   "-q," "--quiet"                 "Quiet, do not show any output."
     printf "  %-3s %-30s %s\n"   "-h," "--help"                  "Display this help and exit."
     printf "  %-3s %-30s %s\n"   "-v," "--version"               "Show version information for this instance of bcrm and exit."
@@ -279,7 +287,7 @@ message() { #{{{
 
     exec 1>&3 #restore stdout
     #prepare
-    while getopts ':Iiwnucyt:' option; do
+    while getopts ':Iriwnucyt:' option; do
         case "$option" in
         I)
             is_input=true
@@ -296,7 +304,7 @@ message() { #{{{
             tput rc
             ;;
         w)
-            status="${clor_warn}${clr_rmso}"
+            status="${clor_warn}!${clr_rmso}"
             ;;
         i)
             status="${clor_info}i${clr_rmso}"
@@ -305,8 +313,11 @@ message() { #{{{
             update=true
             ;;
         c)
-            status="${clor_current}${clr_rmso}"
+            status="${clor_current}➤${clr_rmso}"
             tput sc
+            ;;
+        r)
+            tput rc
             ;;
         :)
             exit_ 5 "Method call error: \t${FUNCNAME[0]}()\tMissing argument for $OPTARG"
@@ -324,7 +335,9 @@ message() { #{{{
     [[ -n $text ]] \
         && text=$(echo "$text" | sed -e 's/^\s*//; 2,$ s/^/      /') \
         && echo -e -n "$text" \
-        && tput el
+        && tput el \
+        && tput ed
+
     [[ $is_input == false ]] && echo
 
     [[ $update == true ]] && tput rc
@@ -822,6 +835,48 @@ grub_install() { #{{{
         grub-install $2 &&
         update-grub &&
         update-initramfs -u -k all" || return 1
+
+} #}}}
+
+# $1: <mount point>
+update_efi_boot() { #{{{
+    logmsg "update_efi_boot"
+    local image_path="$EFI_BOOT_IMAGE"
+    local i images=($1/boot/**/*.efi)
+
+    _find_image() {
+        local path
+        for i in ${!images[@]}; do
+            path="\\EFI$(echo ${images[$nr]//*EFI/} | tr / \\ 2>/dev/null)"
+            [[ "$path" == "$image_path" ]] && return 0
+        done
+        return 1
+    }
+
+    if [[ $UPDATE_EFI_BOOT == true ]]; then
+        if [[ -z $image_path ]]; then
+            message -i -t "Available EFI images:"
+            for i in ${!images[@]}; do
+                message -i -t "$i -- ${images[$i]}"
+            done
+            message -I -i -t "Select EFI image [1-$i]: "
+
+            read nr
+            if [[ $nr -ge 0 && $nr -le $i ]]; then
+                image_path=$(echo ${images[$nr]//*EFI/} | tr / \\ 2>/dev/null)
+            else
+                logmsg "Invalid selection. No changes to NVRAM applied!"
+                return 1
+            fi
+        else
+            _find_image || { logmsg "Boot image $EFI_BOOT_IMAGE not found. No changes applied!"; return 1; }
+        fi
+    fi
+
+    boot_order=$(efibootmgr | grep BootOrder | awk '{print $2}')
+    efibootmgr -c -L bcrm_$CLONE_DATE -d $DEST -l $image_path
+    boot_id=$(efibootmgr -v | tail -n1 | awk '{print $1}' | grep -Eo '[0-9]*')
+    bootorder=$boot_id,$bootorder
 } #}}}
 
 # $1: <mount point>
@@ -1228,7 +1283,7 @@ grub_setup() { #{{{
     local has_efi=$2
     local uefi=$3
     local dest="$4"
-    local mp
+    local mp r=0
     local resume=$(lsblk -lpo name,fstype $DEST | grep swap | awk '{print $1}')
 
     mount_ "$d"
@@ -1276,10 +1331,11 @@ grub_setup() { #{{{
     pkg_remove "$mp" "$REMOVE_PKGS" || return 1
     [[ ${#TO_LVM[@]} -gt 0 ]] && { pkg_install "$mp" "lvm2" || return 1; }
     grub_install "$mp" "$dest" "$apt_pkgs" || return 1
+    update_efi_boot "$mp" || r=2
 
     create_rclocal "$mp"
     umount_chroot
-    return 0
+    return $r
 } #}}}
 
 # $1: <password>
@@ -1376,6 +1432,7 @@ crypt_setup() { #{{{
 
     pkg_remove "$mp" "$REMOVE_PKGS" || return 1
     grub_install "$mp" "$dest" "${apt_pkgs[*]}" || return 1
+    update_efi_boot "$mp"
 
     create_rclocal "$mp"
     umount_chroot
@@ -2048,9 +2105,6 @@ Clone() { #{{{
                 fi
                 pushd "$mpnt" >/dev/null || return 1
 
-
-                [[ $SYS_HAS_EFI == false && $HAS_EFI == true ]] && exit_ 1 "Cannot clone UEFI system. Current running system does not support UEFI."
-
                 ((davail - sused <= 0)) \
                     && exit_ 10 "Require $(to_readable_size ${sused}K) but destination is only $(to_readable_size ${davail}K)"
 
@@ -2157,9 +2211,6 @@ Clone() { #{{{
         for s in ${SRCS_ORDER[@]}; do
             IFS=: read -r sdev sfs spid sptype stype mountpoint sused ssize <<<${SRCS[$s]}
             IFS=: read -r ddev dfs dpid dptype dtype davail <<<${DESTS[${SRC2DEST[$s]}]}
-
-            [[ $SYS_HAS_EFI == false && $HAS_EFI == true ]] \
-                && exit_ 1 "Cannot clone UEFI system. Current running system does not support UEFI."
 
             if [[ $stype == lvm ]]; then
                 local lv_src_name=$(grep $sdev <<<"$lvs_data" | awk '{print $1}')
@@ -2301,7 +2352,7 @@ Clone() { #{{{
     fi
 
     if [[ $HAS_GRUB == true ]]; then
-        message -c -t "Installing Grub"
+        message -c -t "Running boot setup"
         {
             local ddev rest
             IFS=: read -r ddev rest <<<${DESTS[${SRC2DEST[${MOUNTS['/']}]}]}
@@ -2309,8 +2360,7 @@ Clone() { #{{{
             if [[ $ENCRYPT_PWD ]]; then
                 crypt_setup "$ENCRYPT_PWD" $ddev "$DEST" "$LUKS_LVM_NAME" "$ENCRYPT_PART" || return 1
             else
-                [[ $HAS_EFI == true && $SYS_HAS_EFI == false ]] && return 1
-                grub_setup $ddev "$HAS_EFI" "$UEFI" "$DEST" || return 1
+                grub_setup $ddev "$HAS_EFI" "$UEFI" "$DEST" || { message -r -w && return 1; }
             fi
         }
         message -y
@@ -2422,7 +2472,7 @@ Main() { #{{{
     _find_boot() { #{{{
         logmsg "Main@_find_boot"
         local ldata=$($LSBLK_CMD $SRC)
-        declare -n boot_part="$1"
+        [[ -n $1 ]] && declare -n boot_part="$1"
 
         local lvs_list=$(lvs -o lv_dmpath,lv_role)
 
@@ -2547,6 +2597,8 @@ Main() { #{{{
             disable-mount:,
             include-partition:,
             exclude-folder:,
+            update-efi-boot,
+            efi-boot-image:,
             check' \
         -n "$(basename "$0" \
         )" -- "$@")
@@ -2583,7 +2635,7 @@ Main() { #{{{
             PARAMS["$1"]=true
             shift
         else
-            PARAMS["$1"]="$2"
+            PARAMS["$1"]="${2// }"
             shift 2
         fi
     done
@@ -2697,6 +2749,12 @@ Main() { #{{{
             ;;
         '--no-cleanup')
             IS_CLEANUP=false
+            ;;
+        '--update-efi-boot')
+            UPDATE_EFI_BOOT=true
+            ;;
+        '--efi-boot-image')
+            EFI_BOOT_IMAGE="${PARAMS[$k]}"
             ;;
         '--all-to-lvm')
             ALL_TO_LVM=true
@@ -2852,6 +2910,15 @@ Main() { #{{{
         lsblk -lpo parttype "$SRC" | grep -qi $ID_GPT_EFI && HAS_EFI=true
         lsblk -lpo type "$SRC" | grep -qi 'crypt' && HAS_LUKS=true
 	fi
+
+    if [[ $SYS_HAS_EFI == false ]]; then
+        [[ $UPDATE_EFI_BOOT == true ]] &&
+            exit_ 1 "Cannot update EFI boot order. Current running system does not support UEFI."
+        [[ $UEFI == true ]] && 
+            exit_ 1 "Cannot convert to UEFI because system booted in legacy mode. Check your UEFI firmware settings!"
+        [[ $HAS_EFI == true ]] &&
+            exit_ 1 "Cannot clone UEFI system. Current running system does not support UEFI."
+    fi
 
     {
         if [[ -b $DEST ]]; then
