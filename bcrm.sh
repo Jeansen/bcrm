@@ -845,9 +845,9 @@ update_efi_boot() { #{{{
     local i images=($1/boot/**/*.efi)
 
     _find_image() {
-        local path
+        local path i
         for i in ${!images[@]}; do
-            path="\\EFI$(echo ${images[$nr]//*EFI/} | tr / \\ 2>/dev/null)"
+            path="\\EFI$(echo ${images[$i]//*EFI/} | tr / \\ 2>/dev/null)"
             [[ "$path" == "$image_path" ]] && return 0
         done
         return 1
