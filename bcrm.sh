@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=v0.1.1-145-gcf0c25e
+declare VERSION=
 declare F_SCHROOT_CONFIG='/etc/schroot/chroot.d/bcrm'
 declare F_SCHROOT='bcrm.stretch.tar.xz'
 declare F_PART_LIST='part_list'
