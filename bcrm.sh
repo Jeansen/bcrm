@@ -115,6 +115,7 @@ declare SCHROOT=false
 declare IS_CLEANUP=true
 declare ALL_TO_LVM=false
 declare UPDATE_EFI_BOOT=false
+declare UNIQUE_CLONE=false
 
 declare MIN_RESIZE=2048 #In 1M units
 declare SWAP_SIZE=-1    #Values < 0 mean no change/ignore
@@ -229,6 +230,8 @@ usage() { #{{{
     printf "  %-3s %-30s %s\n"   "   " ""                        "Especially if you plan to keep the original disk installed, but the system should"
     printf "  %-3s %-30s %s\n"   "   " ""                        "boot from the clone." 
     printf "  %-3s %-30s %s\n"   "   " "--efi-boot-iamge"        "Path to an existing EFI image, e.g. '\EFI\debian\grub.efi'"
+    printf "  %-3s %-30s %s\n"   "-U," "--unique-clone"          "For GPT partition tables: Randomize the cloned disk's GUID and all partitions' unique GUIDs."
+    printf "  %-3s %-30s %s\n"   "   " ""                        "For MBR partition tables: Randomize the disk identifier only."
     printf "  %-3s %-30s %s\n"   "-q," "--quiet"                 "Quiet, do not show any output."
     printf "  %-3s %-30s %s\n"   "-h," "--help"                  "Display this help and exit."
     printf "  %-3s %-30s %s\n"   "-v," "--version"               "Show version information for this instance of bcrm and exit."
@@ -2063,9 +2066,16 @@ Clone() { #{{{
         else
             local ptable="$(if [[ $_RMODE == true ]]; then cat "$SRC/$F_PART_TABLE"; else sfdisk -d "$SRC"; fi)"
             expand_disk "$SECTORS_SRC" "$SECTORS_DEST" "$ptable" 'ptable'
+            if [[ $UNIQUE_CLONE == true ]]; then
+                grep -E 'label:\s*dos' < <(echo "$ptable") &&
+                    ptable=$(echo "$ptable" | sed "s/\(label-id:\).*/\1 0x$(xxd -l 4 -p /dev/urandom)/")
+            fi
             sfdisk --force "$DEST" < <(echo "$ptable")
             sfdisk -Vq "$DEST" || return 1
             [[ $UEFI == true ]] && mbr2gpt $DEST && HAS_EFI=true
+            if [[ $UNIQUE_CLONE == true ]]; then
+                grep -E 'label:\s*gpt' < <(echo "$ptable") && sgdisk -G /$DEST
+            fi
         fi
         partprobe "$DEST"
     } #}}}
@@ -2568,7 +2578,7 @@ Main() { #{{{
     { >&4; } 2<> /dev/null || exit_ 9
 
     option=$(getopt \
-        -o 'hvuqczps:d:e:n:m:w:b:H:' \
+        -o 'hvuUqczps:d:e:n:m:w:b:H:' \
         --long '
             help,
             version,
@@ -2598,6 +2608,7 @@ Main() { #{{{
             include-partition:,
             exclude-folder:,
             update-efi-boot,
+            unique-clone,
             efi-boot-image:,
             check' \
         -n "$(basename "$0" \
@@ -2697,6 +2708,7 @@ Main() { #{{{
             HOST_NAME="${PARAMS[$k]}"
             ;;
         '-u' | '--make-uefi')
+            PKGS+=(gdisk)
             UEFI=true;
             ;;
         '-p' | '--use-all-pvs')
@@ -2755,6 +2767,10 @@ Main() { #{{{
             ;;
         '--efi-boot-image')
             EFI_BOOT_IMAGE="${PARAMS[$k]}"
+            ;;
+        '-U' | '--unique-clone')
+            UNIQUE_CLONE=true
+            PKGS+=(gdisk)
             ;;
         '--all-to-lvm')
             ALL_TO_LVM=true
