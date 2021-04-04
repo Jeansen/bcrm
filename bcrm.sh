@@ -90,7 +90,7 @@ declare PVS=() VG_DISKS=() CHROOT_MOUNTS=()
 
 # FILLED BY OR BECAUSE OF PROGRAM ARGUMENTS ---------------------------------------------------------------------------{{{
 declare -A EXT_PARTS EXCLUDES CHOWN
-
+declare REMOVE_PKGS=()
 declare PKGS=() #Will be filled with a list of packages that will be needed, depending on given arguments
 declare SRCS_ORDER=() DESTS_ORDER=() SRC_EXCLUDES=()
 
@@ -834,7 +834,7 @@ init_srcs() { #{{{
 grub_install() { #{{{
     logmsg "grub_install"
     chroot "$1" bash -c "
-        DEBIAN_FRONTEND=noninteractive &&
+        DEBIAN_FRONTEND=noninteractive apt-get install -y $3 &&
         grub-install $2 &&
         update-grub &&
         update-initramfs -u -k all" || return 1
@@ -842,10 +842,11 @@ grub_install() { #{{{
 } #}}}
 
 # $1: <mount point>
+# $2: <boot image>
 update_efi_boot() { #{{{
     logmsg "update_efi_boot"
-    local image_path="$EFI_BOOT_IMAGE"
-    local i images=($1/boot/**/*.efi)
+    local i images=($1/boot/**/EFI/**/*.efi)
+    local image_path="$2"
 
     _find_image() {
         local path i
@@ -856,24 +857,22 @@ update_efi_boot() { #{{{
         return 1
     }
 
-    if [[ $UPDATE_EFI_BOOT == true ]]; then
-        if [[ -z $image_path ]]; then
-            message -i -t "Available EFI images:"
-            for i in ${!images[@]}; do
-                message -i -t "$i -- ${images[$i]}"
-            done
-            message -I -i -t "Select EFI image [1-$i]: "
+    if [[ -z ${image_path// } ]]; then
+        message -i -t "Available EFI images:"
+        for i in ${!images[@]}; do
+            message -i -t "$i -- ${images[$i]}"
+        done
+        message -I -i -t "Select EFI image [0-$i]: "
 
-            read nr
-            if [[ $nr -ge 0 && $nr -le $i ]]; then
-                image_path=$(echo ${images[$nr]//*EFI/} | tr / \\ 2>/dev/null)
-            else
-                logmsg "Invalid selection. No changes to NVRAM applied!"
-                return 1
-            fi
+        read nr
+        if [[ $nr -ge 0 && $nr -le $i ]]; then
+            image_path="\\EFI$(echo ${images[$i]//*EFI/} | tr / \\ 2>/dev/null)"
         else
-            _find_image || { logmsg "Boot image $EFI_BOOT_IMAGE not found. No changes applied!"; return 1; }
+            logmsg "Invalid selection. No changes to NVRAM applied!"
+            return 1
         fi
+    else
+        _find_image || { logmsg "Boot image $EFI_BOOT_IMAGE not found. No changes applied!"; return 1; }
     fi
 
     boot_order=$(efibootmgr | grep BootOrder | awk '{print $2}')
@@ -1327,14 +1326,18 @@ grub_setup() { #{{{
 
     if [[ $has_efi == true ]]; then
         local apt_pkgs="grub-efi-amd64-signed shim-signed"
+        REMOVE_PKGS+=(grub-pc)
     else
         local apt_pkgs="grub-pc"
     fi
 
-    pkg_remove "$mp" "$REMOVE_PKGS" || return 1
+    pkg_remove "$mp" "${REMOVE_PKGS[*]}" || return 1
     [[ ${#TO_LVM[@]} -gt 0 ]] && { pkg_install "$mp" "lvm2" || return 1; }
     grub_install "$mp" "$dest" "$apt_pkgs" || return 1
-    update_efi_boot "$mp" || r=2
+
+    if [[ $UPDATE_EFI_BOOT == true ]]; then
+        update_efi_boot "$mp" "$EFI_BOOT_IMAGE" || r=2
+    fi
 
     create_rclocal "$mp"
     umount_chroot
@@ -1435,7 +1438,7 @@ crypt_setup() { #{{{
 
     pkg_remove "$mp" "$REMOVE_PKGS" || return 1
     grub_install "$mp" "$dest" "${apt_pkgs[*]}" || return 1
-    update_efi_boot "$mp"
+    [[ $UPDATE_EFI_BOOT == true ]] && update_efi_boot "$mp" "$EFI_BOOT_IMAGE"
 
     create_rclocal "$mp"
     umount_chroot
@@ -2750,7 +2753,7 @@ Main() { #{{{
                 Use K, M, G or T suffixes to specify kilobytes, megabytes, gigabytes and terabytes."
             ;;
         '--remove-pkgs')
-            REMOVE_PKGS=${PARAMS[$k]}
+            REMOVE_PKGS+=(${PARAMS[$k]})
             ;;
         '--schroot')
             PKGS+=(schroot debootstrap)
@@ -2764,12 +2767,14 @@ Main() { #{{{
             ;;
         '--update-efi-boot')
             UPDATE_EFI_BOOT=true
+            UNIQUE_CLONE=true
             ;;
         '--efi-boot-image')
             EFI_BOOT_IMAGE="${PARAMS[$k]}"
             ;;
         '-U' | '--unique-clone')
-            UNIQUE_CLONE=true
+            #Do not allow overwrites, e.g. when UPDATE_EFI_BOOT is true
+            [[ $UNIQUE_CLONE == false ]] && UNIQUE_CLONE=true
             PKGS+=(gdisk)
             ;;
         '--all-to-lvm')
