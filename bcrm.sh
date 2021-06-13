@@ -723,46 +723,11 @@ set_dest_uuids() { #{{{
         DESTS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${avail:- }" #Avail to be checked
 
         # [[ ${PVS[@]} =~ $NAME ]] && continue
-    done < <($LSBLK_CMD "$DEST" $([[ $PVALL == true ]] && echo ${PVS[@]}) | grep -vE 'disk|UUID="".*PARTUUID=""')
-    align_order
+    done < <($LSBLK_CMD "$DEST" $([[ $PVALL == true ]] && echo ${PVS[@]}) | grep -vE 'disk|UUID="".*PARTUUID=""' | sort -k 1 -t ' ')
 } #}}}
 
 update_src_order() {
     grep -q "$1" < <(echo ${SRCS_ORDER[*]}) || SRCS_ORDER+=($1)
-}
-
-align_order() {
-    declare -A snames
-    declare -A dnames
-
-    {
-        local sdev rest u i
-        for u in ${!SRCS[@]}; do
-            IFS=: read -r sdev rest <<<${SRCS[$u]}
-            if [[ -n $VG_SRC_NAME && $sdev =~ $VG_SRC_NAME ]]; then
-                snames[$sdev]=$u
-                for i in ${!SRCS_ORDER[@]}; do
-                    [[ ${SRCS_ORDER[$i]} == $u ]] && unset SRCS_ORDER[$i];
-                done
-            fi
-        done
-    }
-
-    {
-        local sdev rest u i
-        for u in ${!SRCS[@]}; do
-            IFS=: read -r sdev rest <<<${DESTS[$u]}
-            if [[ -n $VG_SRC_NAME_CLONE && $sdev =~ $VG_SRC_NAME_CLONE ]]; then
-                dnames[$sdev]=$u
-                for i in ${!DESTS_ORDER[@]}; do
-                    [[ ${DESTS_ORDER[$i]} == $u ]] && unset DESTS_ORDER[$i];
-                done
-            fi
-        done
-    }
-
-    SRCS_ORDER+=($( echo ${snames[@]} | sort ))
-    DESTS_ORDER+=($( echo ${dnames[@]} | sort ))
 }
 
 update_dest_order() {
@@ -807,7 +772,7 @@ init_srcs() { #{{{
         fi
         SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
         update_src_order "$UUID"
-    done < <(echo "$file" | grep -v 'disk')
+    done < <(echo "$file" | grep -v 'disk' | sort -k 1 -t ' ')
 
     if [[ $_RMODE == true ]]; then
         pushd "$SRC" >/dev/null || return 1
@@ -1178,6 +1143,7 @@ disk_setup() { #{{{
                 parts+=("${NAME}:${FSTYPE}")
             fi
         done < <(echo "$plist")
+        parts=($(printf "%s\n" "${parts[@]}" | sort -k 1 -t ':')) 
     } #}}}
 
     #Create file systems (including swap) or pvs volumes.
@@ -1188,6 +1154,7 @@ disk_setup() { #{{{
                 | grep -vE 'PARTTYPE="0x5"' \
                 | grep -vE 'TYPE="disk"'
         ) #only partitions
+        plist=$(printf "%s\n" "${plist[@]}" | sort -k 1 -t ' ')
 
         local name kname fstype uuid partuuid type parttype sname sfstype e n=0
         while read -r e; do
@@ -2749,7 +2716,7 @@ Main() { #{{{
             [[ "${LVM_EXPAND_BY:-100}" =~ ^0*[1-9]$|^0*[1-9][0-9]$|^100$ ]] || exit_ 2 "Invalid size attribute in $k ${PARAMS[$k]}"
             ;;
         '--vg-free-size')
-            { validate_size "$2" && VG_FREE_SIZE=$(to_mbyte "${PARAMS[$k]}"); } || exit_ 2 "Invalid size specified.
+            { validate_size "${PARAMS[$k]}" && VG_FREE_SIZE=$(to_mbyte "${PARAMS[$k]}"); } || exit_ 2 "Invalid size specified.
                 Use K, M, G or T suffixes to specify kilobytes, megabytes, gigabytes and terabytes."
             ;;
         '--remove-pkgs')
