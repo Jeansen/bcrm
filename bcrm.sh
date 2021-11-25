@@ -38,6 +38,7 @@ declare F_PVS_LIST='pvs_list'
 declare F_PART_TABLE='part_table'
 declare F_CHESUM='check.md5'
 declare F_CONTEXT='context'
+declare F_VERSIONS='versions.list'
 declare F_DEVICE_MAP='device_map'
 declare LOG_PATH='/tmp'
 declare F_LOG="$LOG_PATH/bcrm.log"
@@ -368,7 +369,7 @@ spinner() { #{{{
 
 #--- Context ---{{{
 
-# Intitializes the CONTEXT array during backup and restore with sane values.
+# Intitializes the CONTEXT map during backup and restore with sane values.
 ctx_init() { #{{{
     logmsg "ctx_init"
     declare -A map
@@ -442,7 +443,7 @@ ctx_set() { #{{{
     esac
 } #}}}
 
-# Save key/values of context array to file
+# Save key/values of context map to file
 ctx_save() { #{{{
     logmsg "ctx_save"
     echo >"$DEST/$F_CONTEXT"
@@ -2318,6 +2319,15 @@ Clone() { #{{{
                 sleep 3
             fi
         }
+
+        #In case the destination has no LVM at all.
+        #This is to make sure we first collect non-lvm disk, e.g. EFI partitions.
+        #Otherwise the ordre will be messed up.
+        if [[ $ALL_TO_LVM == true ]]; then
+            vgchange -an $VG_SRC_NAME_CLONE
+            set_dest_uuids
+            vgchange -ay $VG_SRC_NAME_CLONE
+        fi
 
         #Now collect what we have created
         set_dest_uuids
