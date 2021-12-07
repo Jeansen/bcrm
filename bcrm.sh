@@ -38,7 +38,7 @@ declare F_PVS_LIST='pvs_list'
 declare F_PART_TABLE='part_table'
 declare F_CHESUM='check.md5'
 declare F_CONTEXT='context'
-declare F_VERSIONS='versions.list'
+declare F_VENDOR_LIST='vendor.list'
 declare F_DEVICE_MAP='device_map'
 declare LOG_PATH='/tmp'
 declare F_LOG="$LOG_PATH/bcrm.log"
@@ -117,6 +117,7 @@ declare IS_CLEANUP=true
 declare ALL_TO_LVM=false
 declare UPDATE_EFI_BOOT=false
 declare UNIQUE_CLONE=false
+declare YES=false
 
 declare MIN_RESIZE=2048 #In 1M units
 declare SWAP_SIZE=-1    #Values < 0 mean no change/ignore
@@ -236,6 +237,7 @@ usage() { #{{{
     printf "  %-3s %-30s %s\n"   "-q," "--quiet"                 "Quiet, do not show any output."
     printf "  %-3s %-30s %s\n"   "-h," "--help"                  "Display this help and exit."
     printf "  %-3s %-30s %s\n"   "-v," "--version"               "Show version information for this instance of bcrm and exit."
+    printf "  %-3s %-30s %s\n"   "-y," "--yes"                   "Answer 'yes' to all questions."
 
     printf "\n\nADVANCED OPTIONS"
     printf "\n----------------\n\n"
@@ -369,93 +371,80 @@ spinner() { #{{{
 
 #--- Context ---{{{
 
-# Intitializes the CONTEXT map during backup and restore with sane values.
-ctx_init() { #{{{
-    logmsg "ctx_init"
-    declare -A map
-    map[bootPart]=BOOT_PART
-    map[hasGrub]=HAS_GRUB
-    map[sectors]=SECTORS_SRC
-    map[sectorsUsed]=SECTORS_SRC_USED
-    map[isLvm]=IS_LVM
-    map[isChecksum]=IS_CHECKSUM
-    map[hasEfi]=HAS_EFI
-    map[tableType]=TABLE_TYPE
+vendor_compare() { #{{{
+    logmsg "vendor_compare"
 
-    if [[ -d "$SRC" && -e "$SRC/$F_CONTEXT" ]]; then
-        local IFS='='
-        while read -r k v; do
-            CONTEXT["$k"]="$v"
-        done < <(sed '/^#/d; /^$/d' "$SRC/$F_CONTEXT")
-
-        local keys=$(echo "${!map[@]} ${!CONTEXT[@]}" | tr -s " " $'\n' | sort | uniq -d)
-
-        {
-            local f
-            while read -r f; do
-                [[ -n ${CONTEXT[$f]} ]] && eval "${map[$f]}"="${CONTEXT[$f]}" || exit_ 1 "Could not init context."
-            done < <(echo "$keys")
-        }
+    if (( $# == 2 )); then
+        eval declare -A from="$1"
+        eval declare -A to="$2"
+    elif (( $# == 1 )); then
+        declare input=${1:-$(</dev/stdin)};
+        eval declare -A from="$1"
+        eval declare -A to="$2"
     else
-        {
-            local f
-            for f in "${!map[@]}"; do
-                CONTEXT[$f]=$(eval echo "\$${map[$f]}") || exit_ 1 "Could not init context."
-            done
-        }
+        return 1
     fi
+
+    ( for k in "${!from[@]}"; do
+        [[ ${from[$k]} == "${to[$k]}" ]] || echo -e "$k has different versions:\n${from[$k]}\n${to[$k]}"
+    done )
 } #}}}
 
-# Set a single context value
-ctx_set() { #{{{
-    declare -A map
-    declare -n v=$1
-    logmsg "ctx_set $1"
+vendor_list() { #{{{
+    logmsg "vendor_list"
+    declare -A v_current
 
-    case "$1" in
-    BOOT_PART)
-        CONTEXT[bootPart]="$v"
-        ;;
-    SECTORS_SRC)
-        CONTEXT[sectors]="$v"
-        ;;
-    SECTORS_SRC_USED)
-        CONTEXT[sectorsUsed]="$v"
-        ;;
-    IS_LVM)
-        CONTEXT[isLvm]="$v"
-        ;;
-    IS_CHECKSUM)
-        CONTEXT[isChecksum]="$v"
-        ;;
-    HAS_EFI)
-        CONTEXT[hasEfi]="$v"
-        ;;
-    TABLE_TYPE)
-        CONTEXT[tableType]="$v"
-        ;;
-    HAS_GRUB)
-        CONTEXT[hasGrub]="$v"
-        ;;
-    *)
-        return 1
-        ;;
-    esac
+    IFS=, read -ra tools <<<"${1// /,}"
+
+    for t in "${tools[@]}"; do
+        case "$t" in
+        awk)
+            v_current[$t]="$(awk --version | head -n1 | cut -d ',' -f1)"
+            ;;
+        rsync)
+            v_current[$t]="$(rsync --version | head -n1 | awk '{print $1, $2, $3}')"
+            ;;
+        tar|flock|bc|blockdev|fdisk|sfdisk|parted)
+            v_current[$t]="$($t --version | head -n1)"
+            ;;
+        mkfs.*)
+            v_current[$t]="$($t --help | head -n1)"
+            ;;
+        lvm)
+            v_current[$t]="$(lvs --version | head -n3)"
+            ;;
+        qemu-img)
+            v_current[$t]="$(qemu-img --version | head -n1 | awk '{print $1,$2,$3}')"
+            ;;
+        locale-gen|git)
+            ;;
+        *)
+            return 1
+            ;;
+        esac
+    done
+    declare -p v_current | sed 's/^[^=]*=//' | sed 's/(/(\n/; s/" /"\n/g; s/\[/  [/g'
 } #}}}
 
 # Save key/values of context map to file
 ctx_save() { #{{{
     logmsg "ctx_save"
-    echo >"$DEST/$F_CONTEXT"
-    local f
-    for f in "${!CONTEXT[@]}"; do
-        [[ -n ${CONTEXT[$f]} ]] && echo "$f=${CONTEXT[$f]}" >>"$DEST/$F_CONTEXT"
-    done
-    sed -i '/^\s*$/d' "$DEST/$F_CONTEXT"
+    {
+        declare -p BOOT_PART
+        declare -p HAS_GRUB
+        declare -p ORDER_SRC
+        declare -p SECTORS_SRC
+        declare -p SECTORS_SRC_USED
+        declare -p IS_LVM
+        declare -p IS_CHECKSUM
+        declare -p HAS_EFI
+        declare -p TABLE_TYPE
+        declare -p SRCS_ORDER
+    } >"$DEST/$F_CONTEXT"
+
     echo "# Backup date: $(date)" >>"$DEST/$F_CONTEXT"
     echo "# Version used: $VERSION" >>"$DEST/$F_CONTEXT"
 } #}}}
-#}}}
 
 #--- Wrappers ---- {{{
 
@@ -706,10 +695,11 @@ set_dest_uuids() { #{{{
         read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
         eval declare "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
-        [[ $FSTYPE == swap ]] && continue
-        [[ $UEFI == true && ${PARTTYPE} =~ $ID_GPT_EFI|0x${ID_DOS_EFI} ]] && continue
-
-        [[ $PARTTYPE == 0x5 || $TYPE == crypt || $FSTYPE == crypto_LUKS || $FSTYPE == LVM2_member ]] && continue
+        #Filter all we don't want
+        { [[ $FSTYPE == swap ]] ||
+        [[ $UEFI == true && ${PARTTYPE} =~ $ID_GPT_EFI|0x${ID_DOS_EFI} ]] ||
+        [[ $PARTTYPE == 0x5 || $TYPE == crypt || $FSTYPE == crypto_LUKS || $FSTYPE == LVM2_member ]]; } && 
+        { [[ -n $UUID ]] && update_dest_order $UUID; continue; }
 
         local mp
         [[ -z ${MOUNTPOINT// } ]] && mp="$NAME" || mp="$MOUNTPOINT"
@@ -719,7 +709,6 @@ set_dest_uuids() { #{{{
         read -r used avail <<<$(df --block-size=1K --output=used,size "$NAME" | tail -n -1)
         avail=$((avail - used)) #because df keeps 5% for root!
         umount_ "$mp"
-        update_dest_order $UUID
 
         DESTS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${avail:- }" #Avail to be checked
 
@@ -727,12 +716,22 @@ set_dest_uuids() { #{{{
     done < <($LSBLK_CMD "$DEST" $([[ $PVALL == true ]] && echo ${PVS[@]}) | grep -vE 'disk|UUID="".*PARTUUID=""' | sort -k 1 -t ' ')
 } #}}}
 
+# Unfortunately lsbl does not keep the order with -l or -p. To have the right order, update_src_order() and update_dest_order()
+# create a list and then on every call disposable entries will be filtered out.
 update_src_order() {
-    grep -q "$1" < <(echo ${SRCS_ORDER[*]}) || SRCS_ORDER+=($1)
+    (( ${#SRCS_ORDER} == 0 )) && SRCS_ORDER=($(lsblk -lno uuid $SRC | xargs))
+    for u in "${!SRCS_ORDER[@]}"; do
+        [[ ${SRCS_ORDER[$u]} == "$1" ]] && unset "SRCS_ORDER[$u]"
+    done
+    SRCS_ORDER=(${SRCS_ORDER[@]})
 }
 
 update_dest_order() {
-    grep -q "$1" < <(echo ${DESTS_ORDER[*]}) || DESTS_ORDER+=($1)
+    (( ${#DESTS_ORDER} == 0 )) && DESTS_ORDER=($(lsblk -lno uuid $DEST | xargs))
+    for u in "${!DESTS_ORDER[@]}"; do
+        [[ ${DESTS_ORDER[$u]} == "$1" ]] && unset "DESTS_ORDER[$u]"
+    done
+    DESTS_ORDER=(${DESTS_ORDER[@]})
 }
 
 # $1: partition, e.g. /dev/sda1
@@ -758,9 +757,10 @@ init_srcs() { #{{{
 
         add_device_links $KNAME
 
-        [[ $PARTTYPE == 0x5 || $FSTYPE == LVM2_member || $FSTYPE == swap || $TYPE == crypt || $FSTYPE == crypto_LUKS ]] && continue
-        lvs -o lv_dmpath,lv_role | grep "$NAME" | grep "snapshot" -q && continue
-        [[ $NAME =~ real$|cow$ ]] && continue
+        #Filter all we don't want
+        { [[ $PARTTYPE == 0x5 || $FSTYPE == LVM2_member || $FSTYPE == swap || $TYPE == crypt || $FSTYPE == crypto_LUKS ]] ||
+        lvs -o lv_dmpath,lv_role | grep "$NAME" | grep "snapshot" -q ||
+        [[ $NAME =~ real$|cow$ ]]; } && { [[ -n $UUID ]] && update_src_order $UUID; continue; }
 
         if [[ $_RMODE == false ]]; then
             [[ -z ${MOUNTPOINT// } ]] && mp="$NAME" || mp="$MOUNTPOINT"
@@ -772,7 +772,6 @@ init_srcs() { #{{{
             umount_ "$mp"
         fi
         SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
-        update_src_order "$UUID"
     done < <(echo "$file" | grep -v 'disk' | sort -k 1 -t ' ')
 
     if [[ $_RMODE == true ]]; then
@@ -1599,6 +1598,8 @@ To_file() { #{{{
 
     pushd "$DEST" >/dev/null || return 1
 
+    vendor_list "${PKGS[*]}" >"$DEST/$F_VENDOR_LIST" || exit_ 1 "Cannot create vendor list."
+
     _save_disk_layout() { #{{{
         logmsg "To_file@_save_disk_layout"
         local snp=$(
@@ -1631,7 +1632,6 @@ To_file() { #{{{
         fi
 
         SECTORS_SRC="$(blockdev --getsz $SRC)"
-        ctx_set SECTORS_SRC
         sfdisk -d "$SRC" >"$F_PART_TABLE"
 
         sleep 3 #IMPORTANT !!! So changes by sfdisk can settle.
@@ -1798,11 +1798,6 @@ To_file() { #{{{
 
     popd >/dev/null || return 1
 
-    ctx_set SECTORS_SRC_USED
-    ctx_set BOOT_PART
-    ctx_set IS_LVM
-    ctx_set TABLE_TYPE
-    ctx_set HAS_GRUB
     ctx_save
 
     if [[ $IS_CHECKSUM == true ]]; then
@@ -2067,6 +2062,8 @@ Clone() { #{{{
         pushd "$SRC" >/dev/null || return 1
         files=($(< <(printf "%s\n" [0-9]* | grep -vE '(md5|list)$')))
 
+        vendor_list ${PKGS[*]} | vendor_compare "$(cat $F_VENDOR_LIST)" || message -w -t "Vendor tools mismatch."
+
         #Now, we are ready to restore files from previous backup images
         local file mpnt i uuid puuid fs type sused dev mnt dir ddev dfs dpid dptype dtype davail user group o_user o_group
         for file in "${files[@]}"; do
@@ -2320,15 +2317,6 @@ Clone() { #{{{
             fi
         }
 
-        #In case the destination has no LVM at all.
-        #This is to make sure we first collect non-lvm disk, e.g. EFI partitions.
-        #Otherwise the ordre will be messed up.
-        if [[ $ALL_TO_LVM == true ]]; then
-            vgchange -an $VG_SRC_NAME_CLONE
-            set_dest_uuids
-            vgchange -ay $VG_SRC_NAME_CLONE
-        fi
-
         #Now collect what we have created
         set_dest_uuids
         _src2dest
@@ -2562,6 +2550,7 @@ Main() { #{{{
         --long '
             help,
             version,
+            yes,
             hostname:,
             remove-pkgs:,
             encrypt-with-password:,
@@ -2640,6 +2629,9 @@ Main() { #{{{
         '-v' | '--version')
             echo_ "$VERSION"
             exit_ 0
+            ;;
+        '-y' | '--yes')
+            YES=true
             ;;
         '-s' | '--source')
             SRC=$(readlink -e "${PARAMS[$k]}") || exit_ 1 "Specified source ${PARAMS[$k]} does not exist!"
@@ -2921,23 +2913,26 @@ Main() { #{{{
     {
         if [[ -b $DEST ]]; then
             local pv_name vg_name
-            read pv_name vg_name < <(pvs -o pv_name,vg_name --no-headings | grep "$DEST")
+            read -r pv_name vg_name < <(pvs -o pv_name,vg_name --no-headings | grep "$DEST")
             if [[ -n $vg_name ]]; then
 				message -I -i -t "Destination has physical volumes still assigned. Delete ${vg_name}? [y/N]: "
-				read choice
-				if [[ $choice =~ Y|y|Yes|yes ]]; then
-					vgremove -y $vg_name
-				else
-					exit_ 1
-				fi
+                if [[ $YES == false ]]; then
+                    read -r choice
+                    if [[ $choice =~ Y|y|Yes|yes ]]; then
+                        vgremove -y "$vg_name"
+                    else
+                        exit_ 1
+                    fi
+                else
+                    vgremove -y "$vg_name"
+                fi
 			fi
             unset pv_name vg_name
         fi
 
-        local d
-        for d in "$SRC" "$DEST"; do
+        ( for d in "$SRC" "$DEST"; do
             [[ -b $d ]] && _validate_block_device $d
-        done
+        done )
     }
 
     [[ $(realpath "$SRC") == $(realpath "$DEST") ]] &&
@@ -2959,29 +2954,24 @@ Main() { #{{{
 
     [[ $PVALL == true && -n $ENCRYPT_PWD ]] && exit_ 1 "Encryption only supported for simple LVM setups with a single PV!"
 
-    {
+    (
         #If empyt, nothing happens!
-        local l
         for l in ${!TO_LVM[@]}; do
             _is_partition $l || exit_ 1 "$l is not a valid source partition for LV conversion!"
         done
-    }
+    )
 
     {
         #Check that all expected files exists when restoring
         if [[ -d $SRC ]]; then
-            [[ -s $SRC/$F_CHESUM && $IS_CHECKSUM == true ||
-                -s $SRC/$F_CONTEXT &&
-                -s $SRC/$F_PART_LIST &&
-                -s $SRC/$F_DEVICE_MAP &&
-                -s $SRC/$F_PART_TABLE ]] || exit_ 2 "Cannot restore dump, one or more meta files are missing or empty."
-            if [[ $IS_LVM == true ]]; then
-                [[ -s $SRC/$F_VGS_LIST &&
-                -s $SRC/$F_LVS_LIST &&
-                -s $SRC/$F_PVS_LIST ]] || exit_ 2 "Cannot restore dump, one or more meta files for LVM are missing or empty."
-            fi
+            local meta_files=("$F_CONTEXT" "$F_PART_LIST" "$F_DEVICE_MAP" "$F_VENDOR_LIST" "$F_PART_TABLE")
+            [[ $IS_CHECKSUM == true ]] && meta_files+=("$F_CHESUM") 
+            [[ $IS_LVM == true ]] && meta_files+=($F_VGS_LIST $F_LVS_LIST $F_PVS_LIST)
 
-            local f
+            ( for f in $meta_files; do
+                [[ -s $SRC/$f ]] || exit_ 2 "Cannot restore dump, meta file $f is missing or empty!"
+            done )
+
             local mnts=$(grep -v -i 'swap' "$SRC/$F_PART_LIST" \
                 | grep -Po 'MOUNTPOINT="[^\0]+?"' \
                 | grep -v 'MOUNTPOINT=""' \
@@ -2990,9 +2980,9 @@ Main() { #{{{
                 | tr -s "/" "_"
             ) #TODO What if mount point has spaces?
 
-            for f in $mnts; do
+            ( for f in $mnts; do
                 grep "$f\$" <(ls -A "$SRC") || exit_ 2 "$SRC folder missing files."
-            done
+            done )
         fi
     }
 
@@ -3004,7 +2994,10 @@ Main() { #{{{
         message -y
     fi
 
-    ctx_init
+    #Load context
+    if [[ -d "$SRC" && -e "$SRC/$F_CONTEXT" ]]; then
+        eval "$(cat $SRC/$F_CONTEXT)"
+    fi
 
     [[ $UEFI == true && $SYS_HAS_EFI == false ]] &&
         exit_ 1 "Cannot convert to UEFI because system booted in legacy mode. Check your UEFI firmware settings!"
