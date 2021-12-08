@@ -685,6 +685,8 @@ mounts() { #{{{
 
 set_dest_uuids() { #{{{
     logmsg "set_dest_uuids"
+    (( ${#DESTS_ORDER} == 0 )) && DESTS_ORDER=($(lsblk -lno uuid $DEST | xargs))
+
     if [[ -b $DEST ]]; then
         [[ $IS_LVM == true ]] && vgchange -an $VG_SRC_NAME_CLONE
         [[ $IS_LVM == true ]] && vgchange -ay $VG_SRC_NAME_CLONE
@@ -719,7 +721,6 @@ set_dest_uuids() { #{{{
 # Unfortunately lsbl does not keep the order with -l or -p. To have the right order, update_src_order() and update_dest_order()
 # create a list and then on every call disposable entries will be filtered out.
 update_src_order() {
-    (( ${#SRCS_ORDER} == 0 )) && SRCS_ORDER=($(lsblk -lno uuid $SRC | xargs))
     for u in "${!SRCS_ORDER[@]}"; do
         [[ ${SRCS_ORDER[$u]} == "$1" ]] && unset "SRCS_ORDER[$u]"
     done
@@ -727,7 +728,6 @@ update_src_order() {
 }
 
 update_dest_order() {
-    (( ${#DESTS_ORDER} == 0 )) && DESTS_ORDER=($(lsblk -lno uuid $DEST | xargs))
     for u in "${!DESTS_ORDER[@]}"; do
         [[ ${DESTS_ORDER[$u]} == "$1" ]] && unset "DESTS_ORDER[$u]"
     done
@@ -749,6 +749,7 @@ get_uuid() {
 init_srcs() { #{{{
     logmsg "init_srcs"
     declare file="$1"
+    (( ${#SRCS_ORDER} == 0 )) && SRCS_ORDER=($(lsblk -lno uuid $SRC | xargs))
 
     local name kdev fstype uuid puuid type parttype mountpoint size e
     while read -r e; do
@@ -1838,8 +1839,6 @@ Clone() { #{{{
         local dest=$1
         declare -A src_lfs
 
-        echo "${SRCS[*]}" | grep -q 'lvm' || [[ $ALL_TO_LVM == true || ${#TO_LVM[@]} -ge 0 ]] || return 1
-
         vgcreate "$VG_SRC_NAME_CLONE" $(pvs --noheadings -o pv_name | grep "$dest" | tr -d ' ')
         [[ $PVALL == true ]] && vg_extend "$VG_SRC_NAME_CLONE" "$SRC" "$DEST"
 
@@ -2546,7 +2545,7 @@ Main() { #{{{
     { >&4; } 2<> /dev/null || exit_ 9
 
     option=$(getopt \
-        -o 'hvuUqczps:d:e:n:m:w:b:H:' \
+        -o 'b:cd:e:hH:m:n:pqs:uUvw:yz' \
         --long '
             help,
             version,
