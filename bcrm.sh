@@ -155,14 +155,6 @@ declare LIVE_CHECKSUMS=true
 
 #}}}
 
-# DEBUG ONLY ----------------------------------------------------------------------------------------------------------{{{
-printarr() { #{{{
-    local k
-    declare -n __p="$1"
-    for k in "${!__p[@]}"; do printf "%s=%s\n" "$k" "${__p[$k]}" >> $F_LOG; done
-} #}}}
-#}}}
-
 # PRIVATE - Only used by PUBLIC functions -----------------------------------------------------------------------------{{{
 
 #--- Display ---{{{
@@ -279,7 +271,6 @@ usage() { #{{{
 # -I = Mark text (-t) for Input
 # -u: Update a message indicator, e.g. from status CURRENT to SUCCESS.
 message() { #{{{
-    local OPTIND
     local status
     local text
     local update=false
@@ -292,6 +283,7 @@ message() { #{{{
     clr_rmso=$(tput sgr0)
 
     exec 1>&3 #restore stdout
+
     #prepare
     local option
     while getopts ':Iriwnucyt:' option; do
@@ -378,25 +370,25 @@ vendor_compare() { #{{{
     logmsg "vendor_compare"
 
     if (( $# == 2 )); then
-        eval declare -A from="$1"
-        eval declare -A to="$2"
+        eval local -A from="$1"
+        eval local -A to="$2"
     elif (( $# == 1 )); then
-        declare input=${1:-$(</dev/stdin)};
-        eval declare -A from="$1"
-        eval declare -A to="$2"
+        local input=${1:-$(</dev/stdin)};
+        eval local -A from="$1"
+        eval local -A to="$2"
     else
         return 1
     fi
 
-        local k
-        for k in "${!from[@]}"; do
-            [[ ${from[$k]} == "${to[$k]}" ]] || echo -e "$k has different versions:\n${from[$k]}\n${to[$k]}"
-        done
+    local k
+    for k in "${!from[@]}"; do
+        [[ ${from[$k]} == "${to[$k]}" ]] || echo -e "$k has different versions:\n${from[$k]}\n${to[$k]}"
+    done
 } #}}}
 
 vendor_list() { #{{{
     logmsg "vendor_list"
-    declare -A v_current
+    local -A v
 
     local tools
     IFS=, read -ra tools <<<"${1// /,}"
@@ -405,22 +397,22 @@ vendor_list() { #{{{
     for t in "${tools[@]}"; do
         case "$t" in
         awk)
-            v_current[$t]="$(awk --version | head -n1 | cut -d ',' -f1)"
+            v[$t]="$(awk --version | head -n1 | cut -d ',' -f1)"
             ;;
         rsync)
-            v_current[$t]="$(rsync --version | head -n1 | awk '{print $1, $2, $3}')"
+            v[$t]="$(rsync --version | head -n1 | awk '{print $1, $2, $3}')"
             ;;
         tar|flock|bc|blockdev|fdisk|sfdisk|parted)
-            v_current[$t]="$($t --version | head -n1)"
+            v[$t]="$($t --version | head -n1)"
             ;;
         mkfs.*)
-            v_current[$t]="$($t --help | head -n1)"
+            v[$t]="$($t --help | head -n1)"
             ;;
         lvm)
-            v_current[$t]="$(lvs --version | head -n3)"
+            v[$t]="$(lvs --version | head -n3)"
             ;;
         qemu-img)
-            v_current[$t]="$(qemu-img --version | head -n1 | awk '{print $1,$2,$3}')"
+            v[$t]="$(qemu-img --version | head -n1 | awk '{print $1,$2,$3}')"
             ;;
         locale-gen|git)
             ;;
@@ -429,23 +421,23 @@ vendor_list() { #{{{
             ;;
         esac
     done
-    declare -p v_current | sed 's/^[^=]*=//' | sed 's/(/(\n/; s/" /"\n/g; s/\[/  [/g'
+    local -p v | sed 's/^[^=]*=//' | sed 's/(/(\n/; s/" /"\n/g; s/\[/  [/g'
 } #}}}
 
 # Save key/values of context map to file
 ctx_save() { #{{{
     logmsg "ctx_save"
     {
-        declare -p BOOT_PART
-        declare -p HAS_GRUB
-        declare -p ORDER_SRC
-        declare -p SECTORS_SRC
-        declare -p SECTORS_SRC_USED
-        declare -p IS_LVM
-        declare -p IS_CHECKSUM
-        declare -p HAS_EFI
-        declare -p TABLE_TYPE
-        declare -p SRCS_ORDER
+        local -p BOOT_PART
+        local -p HAS_GRUB
+        local -p ORDER_SRC
+        local -p SECTORS_SRC
+        local -p SECTORS_SRC_USED
+        local -p IS_LVM
+        local -p IS_CHECKSUM
+        local -p HAS_EFI
+        local -p TABLE_TYPE
+        local -p SRCS_ORDER
     } >"$DEST/$F_CONTEXT"
 
     echo "# Backup date: $(date)" >>"$DEST/$F_CONTEXT"
@@ -476,7 +468,6 @@ find_mount_part() { #{{{
 
 mount_() { #{{{
     local cmd="mount"
-    local OPTIND
     local src=$(realpath -s "$1")
     local path
 
@@ -517,7 +508,6 @@ mount_() { #{{{
 } #}}}
 
 umount_() { #{{{
-    local OPTIND
     local cmd="umount -l"
     local mnt=$(realpath -s "$1")
 
@@ -613,7 +603,7 @@ vg_extend() { #{{{
 vg_disks() { #{{{
     logmsg "vg_disks"
     local name=$1
-    declare -n disks=$2
+    local -n disks=$2
 
     local f
     for f in $(pvs --no-headings -o pv_name,lv_dm_path | grep -E "${name}\-\w+" | awk '{print $1}' | sort -u); do
@@ -717,7 +707,7 @@ set_dest_uuids() { #{{{
     local name kdev fstype uuid puuid type parttype mountpoint size e
     while read -r e; do
         read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
-        eval declare "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
+        eval local "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
         #Filter all we don't want
         { [[ $FSTYPE == swap ]] ||
@@ -772,7 +762,7 @@ get_uuid() {
 # $2: <File with lsblk dump>
 init_srcs() { #{{{
     logmsg "init_srcs"
-    declare file="$1"
+    local file="$1"
     (( ${#SRCS_ORDER} == 0 )) && SRCS_ORDER=($(lsblk -lno uuid "$SRC" | xargs))
 
     _() {
@@ -780,7 +770,7 @@ init_srcs() { #{{{
         while read -r e; do
             local name kdev fstype uuid puuid type parttype mountpoint size
             read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
-            eval declare "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
+            eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
             add_device_links "$KNAME"
 
@@ -1000,15 +990,14 @@ expand_disk() { #{{{
     logmsg "expand_disk"
     local src_size=$1
     local dest_size=$2
+    local pdata="$3"
+    local -n pdata_new=$4
+    local -n swap_size=0
     local size
     local new_size
-    local swap_size=0
-    local pdata="$3"
 
-    declare -n pdata_new=$4
-
-    declare -A val_parts #Partitions with fixed sizes
-    declare -A var_parts #Partitions to be expanded
+    local -A val_parts #Partitions with fixed sizes
+    local -A var_parts #Partitions to be expanded
 
     _size() { #{{{
         local part=$1
@@ -1149,7 +1138,7 @@ mbr2gpt() { #{{{
 # $3: <dest-dev>
 disk_setup() { #{{{
     logmsg "disk_setup"
-    declare parts=() pvs_parts=()
+    local parts=() pvs_parts=()
     local file="$1"
     local src="$2"
     local dest="$3"
@@ -1219,8 +1208,8 @@ disk_setup() { #{{{
 # $2: <dest-mount>
 boot_setup() { #{{{
     logmsg "boot_setup"
-    declare -n sd="$1"
-    declare dmnt="$2"
+    local -n sd="$1"
+    local dmnt="$2"
 
     local path=(
         "/cmdline.txt"
@@ -1857,7 +1846,6 @@ To_file() { #{{{
 
 Clone() { #{{{
     logmsg "Clone"
-    local OPTIND
 
     while getopts ':r' option; do
         case "$option" in
@@ -1880,7 +1868,7 @@ Clone() { #{{{
         logmsg "[ Clone ] _lvm_setup"
         local s1 s2
         local dest=$1
-        declare -A src_lfs
+        local -A src_lfs
 
         vgcreate "$VG_SRC_NAME_CLONE" $(pvs --noheadings -o pv_name | grep "$dest" | tr -d ' ')
         [[ $PVALL == true ]] && vg_extend "$VG_SRC_NAME_CLONE" "$SRC" "$DEST"
@@ -1891,8 +1879,8 @@ Clone() { #{{{
         local vg_data=$(vgs --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free | grep -E "\b$VG_SRC_NAME\b|\b$VG_SRC_NAME_CLONE\b")
         [[ $_RMODE == true ]] && vg_data=$(echo -e "$vg_data\n$(cat $SRC/$F_VGS_LIST)")
 
-        declare -i fixd_size_dest=0
-        declare -i fixd_size_src=0
+        local -i fixd_size_dest=0
+        local -i fixd_size_src=0
 
         _create_fixed() { #{{{ TODO works, but should be factored out to avoid multiple nesting!
             local part="$1"
@@ -1970,7 +1958,7 @@ Clone() { #{{{
                 local f=$({ [[ $_RMODE == true ]] && cat "$SRC/$F_PART_LIST" || $LSBLK_CMD "$SRC"; } | grep 'SWAP')
                 if [[ -n $f  ]]; then
                     read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$f"
-                    eval declare "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
+                    eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
                     src_swap=$(to_mbyte $SIZE)
                     s1=$(sector_to_mbyte $SECTORS_SRC)
                     s1=$((s1 - src_swap - fixd_size_src))
@@ -2505,7 +2493,7 @@ Main() { #{{{
     _find_boot() { #{{{
         logmsg "Main@_find_boot"
         local ldata=$($LSBLK_CMD $SRC)
-        [[ -n $1 ]] && declare -n boot_part="$1"
+        [[ -n $1 ]] && local -n boot_part="$1"
 
         local lvs_list=$(lvs -o lv_dmpath,lv_role)
 
@@ -2521,7 +2509,7 @@ Main() { #{{{
                 if [[ -n $part ]]; then
                     local name kdev fstype uuid puuid type parttype mountpoint size
                     read -r name kdev fstype uuid puuid type parttype mountpoint size <<<$(echo "$ldata" | grep "=\"${part#*=}\"")
-                    eval declare "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
+                    eval local "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
                     boot_part=$KNAME
                 fi
             fi
@@ -2570,7 +2558,7 @@ Main() { #{{{
 
     _src_size() { #{{{
         logmsg "Main@_src_size"
-        declare -n __src_size=$1
+        local -n __src_size=$1
         __src_size=0
         local plist=$(lsblk -nlpo fstype,type,kname,name,mountpoint "$SRC" | grep '^\S' | grep -v LVM2_member | awk 'BEGIN {OFS=":"} {print $1,$3,$4,$5}')
         local lvs_list=$(lvs -o lv_dmpath,lv_role)
