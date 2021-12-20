@@ -271,6 +271,7 @@ usage() { #{{{
 # -I = Mark text (-t) for Input
 # -u: Update a message indicator, e.g. from status CURRENT to SUCCESS.
 message() { #{{{
+    local OPTIND
     local status
     local text
     local update=false
@@ -421,8 +422,7 @@ vendor_list() { #{{{
             ;;
         esac
     done
-
-    local -p v | sed 's/^[^=]*=//' | sed 's/(/(\n/; s/" /"\n/g; s/\[/  [/g'
+    declare -p v_current | sed 's/^[^=]*=//' | sed 's/(/(\n/; s/" /"\n/g; s/\[/  [/g'
 } #}}}
 
 # Save key/values of context map to file
@@ -469,6 +469,7 @@ find_mount_part() { #{{{
 
 mount_(){ #{{{
     local cmd="mount"
+    local OPTIND
     local src=$(realpath -s "$1")
     local path
 
@@ -509,6 +510,7 @@ mount_(){ #{{{
 } #}}}
 
 umount_() { #{{{
+    local OPTIND
     local cmd="umount -l"
     local mnt=$(realpath -s "$1")
 
@@ -1867,6 +1869,7 @@ To_file() { #{{{
 
 Clone() { #{{{
     logmsg "Clone"
+    local OPTIND
 
     while getopts ':r' option; do
         case "$option" in
