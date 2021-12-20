@@ -48,7 +48,7 @@ declare -r BACKUP_FOLDER=/var/bcrm/backup
 declare -r SCRIPTNAME=$(basename "$0")
 declare -r SCRIPTPATH=$(dirname "$0")
 declare -r PIDFILE="/var/run/$SCRIPTNAME"
-declare -r ROOT_DISK=$(lsblk -lpo pkname,mountpoint | grep '\s/$' | awk '{print $1}')
+declare -r ROOT_DISK=$(lsblk -lpo pkname,mountpoint | grep '\s/$' | gawk '{print $1}')
 declare -r SRC_NBD=/dev/nbd0
 declare -r DEST_NBD=/dev/nbd1
 declare -r CLONE_DATE=$(date '+%d%m%y')
@@ -397,23 +397,23 @@ vendor_list() { #{{{
     local t
     for t in "${tools[@]}"; do
         case "$t" in
-        awk)
-            v[$t]="$(awk --version | head -n1 | cut -d ',' -f1)"
+        gawk)
+            v[$t]="$($t --version | head -n1 | cut -d ',' -f1)"
             ;;
         rsync)
-            v[$t]="$(rsync --version | head -n1 | awk '{print $1, $2, $3}')"
+            v[$t]="$($t --version | head -n1 | gawk '{print $1, $2, $3}')"
             ;;
         tar|flock|bc|blockdev|fdisk|sfdisk|parted)
             v[$t]="$($t --version | head -n1)"
             ;;
-        mkfs.*)
-            v[$t]="$($t --help | head -n1)"
+        'mkfs.vfat'|'mkfs')
+            { v[$t]="$($t --version )"; } 2>/dev/null #mkfs pollutes the log otherwise!
             ;;
         lvm)
             v[$t]="$(lvs --version | head -n3)"
             ;;
         qemu-img)
-            v[$t]="$(qemu-img --version | head -n1 | awk '{print $1,$2,$3}')"
+            v[$t]="$($t --version | head -n1 | gawk '{print $1,$2,$3}')"
             ;;
         locale-gen|git)
             ;;
@@ -422,23 +422,22 @@ vendor_list() { #{{{
             ;;
         esac
     done
-    declare -p v_current | sed 's/^[^=]*=//' | sed 's/(/(\n/; s/" /"\n/g; s/\[/  [/g'
+    local -p v | sed 's/^[^=]*=//' | sed 's/(/(\n/; s/" /"\n/g; s/\[/  [/g'
 } #}}}
 
 # Save key/values of context map to file
 ctx_save() { #{{{
     logmsg "ctx_save"
     {
-        local -p BOOT_PART
-        local -p HAS_GRUB
-        local -p ORDER_SRC
-        local -p SECTORS_SRC
-        local -p SECTORS_SRC_USED
-        local -p IS_LVM
-        local -p IS_CHECKSUM
-        local -p HAS_EFI
-        local -p TABLE_TYPE
-        local -p SRCS_ORDER
+        declare -p BOOT_PART
+        declare -p HAS_GRUB
+        declare -p SECTORS_SRC
+        declare -p SECTORS_SRC_USED
+        declare -p IS_LVM
+        declare -p IS_CHECKSUM
+        declare -p HAS_EFI
+        declare -p TABLE_TYPE
+        declare -p SRCS_ORDER
     } >"$DEST/$F_CONTEXT"
 
     echo "# Backup date: $(date)" >>"$DEST/$F_CONTEXT"
@@ -523,7 +522,7 @@ umount_() { #{{{
         :)
             printf "missing argument for -%s\n" "$OPTARG" >&2
             ;;
-        \?)
+        ?)
             printf "illegal option: -%s\n" "$OPTARG" >&2
             ;;
         esac
@@ -586,7 +585,7 @@ vg_extend() { #{{{
     PVS=()
 
     if [[ -d $src ]]; then
-        src=$(df -P "$src" | tail -1 | awk '{print $1}')
+        src=$(df -P "$src" | tail -1 | gawk '{print $1}')
     fi
 
     local e
@@ -595,7 +594,7 @@ vg_extend() { #{{{
         read -r name type <<<"$e"
         [[ -n $(lsblk -no mountpoint "$name" 2>/dev/null) ]] && continue
         echo ';' | sfdisk -q "$name" && sfdisk "$name" -Vq
-        local part=$(lsblk "$name" -lnpo name,type | grep part | awk '{print $1}')
+        local part=$(lsblk "$name" -lnpo name,type | grep part | gawk '{print $1}')
         pvcreate -ff "$part" && vgextend "$vg_name" "$part"
         PVS+=("$part")
     done < <(lsblk -po name,type | grep disk | grep -Ev "$dest|$src")
@@ -609,8 +608,8 @@ vg_disks() { #{{{
     local -n disks=$2
 
     local f
-    for f in $(pvs --no-headings -o pv_name,lv_dm_path | grep -E "${name}\-\w+" | awk '{print $1}' | sort -u); do
-        disks+=($(lsblk -pnls $f | grep disk | awk '{print $1}'))
+    for f in $(pvs --no-headings -o pv_name,lv_dm_path | grep -E "${name}\-\w+" | gawk '{print $1}' | sort -u); do
+        disks+=($(lsblk -pnls $f | grep disk | gawk '{print $1}'))
     done
 } #}}}
 
@@ -620,7 +619,7 @@ vg_disks() { #{{{
 
 add_device_links() { #{{{
     local kdev=$1
-    local devlinks=$(find /dev -type l -exec readlink -nf {} \; -exec echo " {}" ';' | grep "$kdev" | awk '{print $2}')
+    local devlinks=$(find /dev -type l -exec readlink -nf {} \; -exec echo " {}" ';' | grep "$kdev" | gawk '{print $2}')
     DEVICE_MAP[$kdev]="$devlinks"
 
     local d
@@ -660,7 +659,7 @@ mounts() { #{{{
                                 fi
                             };_
                         fi
-                    done <<<"$(grep -E '^[^;#]' "$mpnt/etc/fstab" | awk '{print $1,$2,$3}')"
+                    done <<<"$(grep -E '^[^;#]' "$mpnt/etc/fstab" | gawk '{print $1,$2,$3}')"
                 fi
 
                 umount_ "$mp"
@@ -803,7 +802,7 @@ init_srcs() { #{{{
                 IFS=. read -r i uuid puuid fs type sused dev mnt <<<"$(pad_novalue "$f")"
                 IFS=: read -r sname sfstype spartuuid sparttype stype mp used size <<<"${SRCS[$uuid]}"
                 if [[ $type == part ]]; then
-                    sname=$(grep "$uuid" "$F_PART_LIST" | awk '{print $1}' | cut -d '"' -f2)
+                    sname=$(grep "$uuid" "$F_PART_LIST" | gawk '{print $1}' | cut -d '"' -f2)
                     size=$(sector_to_kbyte $(grep "$sname" "$F_PART_TABLE" | grep -o 'size=.*,' | grep -o '[0-9]*'))
                 fi
                 SRCS[$uuid]="${sname//NOVALUE/}:${sfstype//NOVALUE/}:${spartuuid//NOVALUE/}:${sparttype//NOVALUE/}:${stype//NOVALUE/}:${mp//NOVALUE/}:${sused//NOVALUE/}:${size//NOVALUE/}"
@@ -863,9 +862,9 @@ update_efi_boot() { #{{{
         _find_image || { logmsg "Boot image $EFI_BOOT_IMAGE not found. No changes applied!"; return 1; }
     fi
 
-    boot_order=$(efibootmgr | grep BootOrder | awk '{print $2}')
+    boot_order=$(efibootmgr | grep BootOrder | gawk '{print $2}')
     efibootmgr -c -L "bcrm_$CLONE_DATE" -d "$DEST" -l "$image_path"
-    boot_id=$(efibootmgr -v | tail -n1 | awk '{print $1}' | grep -Eo '[0-9]*')
+    boot_id=$(efibootmgr -v | tail -n1 | gawk '{print $1}' | grep -Eo '[0-9]*')
     bootorder=$boot_id,$bootorder
 } #}}}
 
@@ -1038,7 +1037,7 @@ expand_disk() { #{{{
                 var_parts[$name]=${size%,*}
                 ((n++))
             fi
-        done < <(echo "$pdata" | grep '^/' | awk '{print $1,$6}')
+        done < <(echo "$pdata" | grep '^/' | gawk '{print $1,$6}')
     };_ #}}}
 
     _(){ #{{{
@@ -1053,7 +1052,7 @@ expand_disk() { #{{{
         local e
         while read -r e; do
             local size=$(echo "$e" | sed -E 's/.*size=\s*([0-9]*).*/\1/')
-            local part=$(echo "$e" | awk '{print $1}')
+            local part=$(echo "$e" | gawk '{print $1}')
 
             if [[ -n "$size" ]]; then
                 if [[ $part == "$SWAP_PART" || $part == "$BOOT_PART" || $part == "$EFI_PART" ]]; then
@@ -1117,12 +1116,12 @@ expand_disk() { #{{{
 mbr2gpt() { #{{{
     logmsg "mbr2gpt"
     local dest="$1"
-    local overlap=$(echo q | gdisk "$dest" | grep -E '\d*\s*blocks!' | awk '{print $1}')
+    local overlap=$(echo q | gdisk "$dest" | grep -E '\d*\s*blocks!' | gawk '{print $1}')
     local pdata=$(sfdisk -d "$dest")
 
     _(){ #{{{
         if [[ $overlap -gt 0 ]]; then
-            local sectors=$(echo "$pdata" | tail -n 1 | grep -o -P 'size=\s*(\d*)' | awk '{print $2}')
+            local sectors=$(echo "$pdata" | tail -n 1 | grep -o -P 'size=\s*(\d*)' | gawk '{print $2}')
             sfdisk "$dest" < <(echo "$pdata" | sed -e "$ s/$sectors/$((sectors - overlap))/")
         fi
     };_ #}}}
@@ -1136,7 +1135,7 @@ mbr2gpt() { #{{{
         pdata=$(sfdisk -d "$dest")
         pdata=$(echo "$pdata" | grep 'size=' | sed -e 's/^[^,]*,\s*//; s/uuid=[a-Z0-9-]*,\{,1\}//')
         pdata=$(echo -e "size=1024000, type=${ID_GPT_EFI^^}\n${pdata}")
-        local size=$(echo "$pdata" | grep -o -P 'size=\s*(\d*)' | awk '{print $2}' | tail -n 1)
+        local size=$(echo "$pdata" | grep -o -P 'size=\s*(\d*)' | gawk '{print $2}' | tail -n 1)
         pdata=$(echo "$pdata" | sed -e "s/$size/$((size - 1024000))/") #TODO what if n partitions with the same size?
     };_ #}}}
 
@@ -1285,7 +1284,7 @@ grub_setup() { #{{{
     local uefi=$3
     local dest="$4"
     local mp r=0
-    local resume=$(lsblk -lpo name,fstype "$DEST" | grep swap | awk '{print $1}')
+    local resume=$(lsblk -lpo name,fstype "$DEST" | grep swap | gawk '{print $1}')
 
     mount_ "$d"
     mp=$(get_mount "$d") || exit_ 1 "Could not find mount journal entry for $d. Aborting!" #do not use local, $? will be affected!
@@ -1612,7 +1611,7 @@ Cleanup() { #{{{
         #Check if system files have been changed for execution and restore
         local f failed=()
         for f in "${!CHG_SYS_FILES[@]}"; do
-            if [[ ${CHG_SYS_FILES["$f"]} == $(md5sum "${BACKUP_FOLDER}/${f}" | awk '{print $1}') ]]; then
+            if [[ ${CHG_SYS_FILES["$f"]} == $(md5sum "${BACKUP_FOLDER}/${f}" | gawk '{print $1}') ]]; then
                 cp "${BACKUP_FOLDER}/${f}" "$f"
             else
                 failed+=("$f")
@@ -1642,7 +1641,7 @@ To_file() { #{{{
             sudo lvs --noheadings --units m --nosuffix -o lv_name,vg_name,lv_size,vg_size,vg_free,lv_active,lv_role \
                 | grep 'snap' \
                 | sed -e 's/^\s*//' \
-                | awk '{print $1}'
+                | gawk '{print $1}'
         )
 
         [[ -z $snp ]] && snp="NOSNAPSHOT"
@@ -1694,7 +1693,7 @@ To_file() { #{{{
 
     _(){ #{{{
         if [[ $IS_LVM ]]; then
-            local vg_src_name=$(pvs --noheadings -o pv_name,vg_name | grep "$SRC" | xargs | awk '{print $2}')
+            local vg_src_name=$(pvs --noheadings -o pv_name,vg_name | grep "$SRC" | xargs | gawk '{print $2}')
             if [[ -z $vg_src_name ]]; then
                 while read -r e g; do
                     grep -q "${SRC##*/}" < <(dmsetup deps -o devname "$e" | sed 's/.*(\(\w*\).*/\1/g') && vg_src_name="$g"
@@ -1707,7 +1706,7 @@ To_file() { #{{{
 
             local src_vg_free=$( vgs --noheadings --units m --nosuffix -o vg_name,vg_free \
                 | grep "\b${vg_src_name}\b" \
-                | awk '{print $2}'
+                | gawk '{print $2}'
             )
         fi
     };_ #}}}
@@ -1742,7 +1741,7 @@ To_file() { #{{{
         _(){ #{{{
             if [[ $INTERACTIVE == true ]]; then
                 local ipc=$(mktemp)
-                du --bytes $excl -s -x $mpnt | awk '{print $1}' > $ipc &
+                du --bytes $excl -s -x $mpnt | gawk '{print $1}' > $ipc &
                 spinner $! "Creating backup for $sdev" "scan"
                 local size=$(cat $ipc)
 
@@ -1800,7 +1799,7 @@ To_file() { #{{{
             local mount=${MOUNTS[$sid]:-${MOUNTS[$spid]}}
 
             if [[ $type == lvm ]]; then
-                local lv_src_name=$(grep $sdev <<<"$lvs_data" | awk '{print $1}')
+                local lv_src_name=$(grep $sdev <<<"$lvs_data" | gawk '{print $1}')
             fi
 
             if [[ $type == lvm && "${src_vg_free%%.*}" -ge "500" && -z $SRC_IMG ]]; then
@@ -1880,7 +1879,7 @@ Clone() { #{{{
             printf "missing argument for -%s\n" "$OPTARG" >&2
             return 1
             ;;
-        \?)
+        ?)
             printf "illegal option: -%s\n" "$OPTARG" >&2
             return 1
             ;;
@@ -1914,7 +1913,7 @@ Clone() { #{{{
             for d in ${DEVICE_MAP[$part]}; do
                 if echo "$lvm_data" | grep -q "$d\|$part"; then
                     local name size
-                    read -r name size <<<$(echo "$lvm_data" | grep "$d\|$part" | awk '{print $1, $3}')
+                    read -r name size <<<$(echo "$lvm_data" | grep "$d\|$part" | gawk '{print $1, $3}')
                     local part_size_src=${size%%.*}
                     local part_size_dest=${size%%.*}
 
@@ -2020,7 +2019,7 @@ Clone() { #{{{
 
                 local vg_free=$( vgs --noheadings --units m --nosuffix -o vg_name,vg_free \
                     | grep "\b${VG_SRC_NAME_CLONE}\b" \
-                    | awk '{print $2}'
+                    | gawk '{print $2}'
                 )
 
                 lv_size=${lv_size%%.*}
@@ -2053,15 +2052,15 @@ Clone() { #{{{
                 [[ $dm_path =~ swap ]] && mkswap -f "$dm_path" && continue
                 [[ -z ${src_lfs[$lv_name]} ]] && exit_ 1 "Unexpected Error" #Yes, I know... but has to do for the moment!
                 { [[ "${src_lfs[$lv_name]}" == swap ]] && mkswap -f "$dm_path"; } || mkfs -t "${src_lfs[$lv_name]}" "$dm_path"
-            done < <(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | awk '{print $1,$2}')
+            done < <(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
         };_ #}}}
     } #}}}
 
     _prepare_disk() { #{{{
         logmsg "[ Clone ] _prepare_disk"
         if hash lvm 2>/dev/null; then
-            # local vgname=$(vgs -o pv_name,vg_name | eval grep "'${DEST}|${VG_DISKS/ /|}'" | awk '{print $2}')
-            local vgname=$(vgs -o pv_name,vg_name | grep "${DEST}" | awk '{print $2}')
+            # local vgname=$(vgs -o pv_name,vg_name | eval grep "'${DEST}|${VG_DISKS/ /|}'" | gawk '{print $2}')
+            local vgname=$(vgs -o pv_name,vg_name | grep "${DEST}" | gawk '{print $2}')
             vgreduce --removemissing "$vgname"
             vgremove -f "$vgname"
             pvremove -f "${DEST}*"
@@ -2146,7 +2145,7 @@ Clone() { #{{{
 
                 _(){ #{{{
                     if [[ $INTERACTIVE == true ]]; then
-                        local size=$(du --bytes -c "${SRC}/${file}" | tail -n1 | awk '{print $1}')
+                        local size=$(du --bytes -c "${SRC}/${file}" | tail -n1 | gawk '{print $1}')
                         cmd="pv --interval 0.5 --numeric -s $size \"${SRC}\"/${file}* | $cmd"
                         [[ $fs == vfat ]] && cmd="fakeroot $cmd"
                         local e
@@ -2245,7 +2244,7 @@ Clone() { #{{{
 
         local src_vg_free=$( vgs --noheadings --units m --nosuffix -o vg_name,vg_free \
             | grep "\b${VG_SRC_NAME}\b" \
-            | awk '{print $2}'
+            | gawk '{print $2}'
         )
 
         local s smpnt dmpnt sdev sfs spid sptype stype sused ssize ddev dfs dpid dptype dtype davail
@@ -2254,7 +2253,7 @@ Clone() { #{{{
             IFS=: read -r ddev dfs dpid dptype dtype davail <<<${DESTS[${SRC2DEST[$s]}]}
 
             if [[ $stype == lvm ]]; then
-                local lv_src_name=$(grep $sdev <<<"$lvs_data" | awk '{print $1}')
+                local lv_src_name=$(grep $sdev <<<"$lvs_data" | gawk '{print $1}')
             fi
 
             if [[ $stype == lvm && "${src_vg_free%%.*}" -ge "500" && -z $SRC_IMG ]]; then
@@ -2431,7 +2430,7 @@ Main() { #{{{
         local vg_name="$2"
 
         if [[ $_RMODE == true ]]; then
-            grep -qw "$lv_name" < <(awk '{print $1}' "$SRC/$F_LVS_LIST" | sort -u)
+            grep -qw "$lv_name" < <(gawk '{print $1}' "$SRC/$F_LVS_LIST" | sort -u)
         else
             lvs --noheadings -o lv_name,vg_name | grep -w "$vg_name" | grep -qw "$1"
         fi
@@ -2504,7 +2503,7 @@ Main() { #{{{
         logmsg "Main@_prepare_locale"
         mkdir -p $BACKUP_FOLDER
         local cf="/etc/locale.gen"
-        CHG_SYS_FILES["$cf"]=$(md5sum "$cf" | awk '{print $1}')
+        CHG_SYS_FILES["$cf"]=$(md5sum "$cf" | gawk '{print $1}')
 
         mkdir -p "${BACKUP_FOLDER}/${cf%/*}" && cp "$cf" "${BACKUP_FOLDER}/${cf}"
         echo "en_US.UTF-8 UTF-8" >"$cf"
@@ -2528,7 +2527,7 @@ Main() { #{{{
             mount_ "$mp" || exit_ 1 "Could not mount ${mp}."
             mpnt=$(get_mount $mp) || exit_ 1 "Could not find mount journal entry for $mp. Aborting!"
             if [[ -f ${mpnt}/etc/fstab ]]; then
-                local part=$(awk '$1 ~ /^[^;#]/' "${mpnt}/etc/fstab" | grep -E "\s+/boot\s+" | awk '{print $1}')
+                local part=$(gawk '$1 ~ /^[^;#]/' "${mpnt}/etc/fstab" | grep -E "\s+/boot\s+" | gawk '{print $1}')
                 if [[ -n $part ]]; then
                     local name kdev fstype uuid puuid type parttype mountpoint size
                     read -r name kdev fstype uuid puuid type parttype mountpoint size <<<$(echo "$ldata" | grep "=\"${part#*=}\"")
@@ -2568,7 +2567,7 @@ Main() { #{{{
         else
             if [[ $PVALL == true ]]; then
                 local d
-                for d in $(lsblk -po name,type | grep disk | grep -v "$DEST" | awk '{print $1}'); do
+                for d in $(lsblk -po name,type | grep disk | grep -v "$DEST" | gawk '{print $1}'); do
                     dest_size=$((dest_size + $(blockdev --getsize64 "$d")))
                 done
             else
@@ -2583,14 +2582,14 @@ Main() { #{{{
         logmsg "Main@_src_size"
         local -n __src_size=$1
         __src_size=0
-        local plist=$(lsblk -nlpo fstype,type,kname,name,mountpoint "$SRC" | grep '^\S' | grep -v LVM2_member | awk 'BEGIN {OFS=":"} {print $1,$3,$4,$5}')
+        local plist=$(lsblk -nlpo fstype,type,kname,name,mountpoint "$SRC" | grep '^\S' | grep -v LVM2_member | gawk 'BEGIN {OFS=":"} {print $1,$3,$4,$5}')
         local lvs_list=$(lvs -o lv_dmpath,lv_role)
 
         local fs dev name mountpoint swap_size=0
         while IFS=: read -r fs dev name mountpoint; do
             if grep "$name" <<<"$lvs_list" | grep -vq "snapshot" && [[ -n ${fs// } ]]; then
                 if [[ $SWAP_SIZE -lt 0 && $fs == swap ]]; then
-                    swap_size=$(swapon --show=size,name --bytes --noheadings | grep $dev | awk '{print $1}') #no swap = 0
+                    swap_size=$(swapon --show=size,name --bytes --noheadings | grep $dev | gawk '{print $1}') #no swap = 0
                     swap_size=$(to_kbyte ${swap_size:-0})
                 fi
 
@@ -2882,15 +2881,13 @@ Main() { #{{{
 
     grep -q 'LVM2_member' < <([[ -d $SRC ]] && cat "$SRC/$F_PART_LIST" || lsblk -o FSTYPE "$SRC") && PKGS+=(lvm)
 
-    PKGS+=(awk rsync tar flock bc blockdev fdisk sfdisk locale-gen git mkfs.vfat parted)
+    PKGS+=(gawk rsync tar flock bc blockdev fdisk sfdisk locale-gen git mkfs parted)
     [[ -d $SRC ]] && PKGS+=(fakeroot) && _RMODE=true
 
     _(){ #{{{
         local packages=()
         #Inform about ALL missing but necessary tools.
         for c in "${PKGS[@]}"; do
-            echo "$c" >>/tmp/f
-
             hash "$c" 2>/dev/null || {
                 case "$c" in
                 lvm)
@@ -2912,12 +2909,12 @@ Main() { #{{{
                 abort='exit_ 1'
             }
         done
+
+        exec >$F_LOG 2>&1
+
+        [[ -n $abort ]] && message -n -t "ERROR: Some packages missing. Please install packages: ${packages[*]}"
+        eval "$abort"
     };_ #}}}
-
-    exec >$F_LOG 2>&1
-
-    [[ -n $abort ]] && message -n -t "ERROR: Some packages missing. Please install packages: ${packages[*]}"
-    eval "$abort"
 
     [[ -b "$SRC" && -d $DEST && -n "$(ls "$DEST")" ]] && exit_ 1 "Destination not empty!"
 
@@ -3105,19 +3102,19 @@ Main() { #{{{
             [[ -f $d ]] && d=$(dirname "$d")
             if [[ -d $d ]]; then
                 local disk=()
-                disk+=($(df --block-size=1M "$d" | tail -n 1 | awk '{print $1}'))
-                disk+=($(lsblk -psnlo name,type $disk 2>/dev/null | grep disk | awk '{print $1}'))
+                disk+=($(df --block-size=1M "$d" | tail -n 1 | gawk '{print $1}'))
+                disk+=($(lsblk -psnlo name,type $disk 2>/dev/null | grep disk | gawk '{print $1}'))
                 [[ ${disk[-1]} == "$SRC" || ${disk[-1]} == "$DEST" ]] && exit_ 1 "Source and destination cannot be the same!"
             fi
         done
     };_ #}}}
 
-    VG_SRC_NAME=($(awk '{print $2}' < <(if [[ -d $SRC && $IS_LVM == true ]]; then cat "$SRC/$F_PVS_LIST"; else pvs --noheadings -o pv_name,vg_name | grep "$SRC"; fi) | sort -u))
+    VG_SRC_NAME=($(gawk '{print $2}' < <(if [[ -d $SRC && $IS_LVM == true ]]; then cat "$SRC/$F_PVS_LIST"; else pvs --noheadings -o pv_name,vg_name | grep "$SRC"; fi) | sort -u))
 
     _(){ #{{{
         if [[ -z $VG_SRC_NAME && $HAS_LUKS == true ]]; then
-            local luks=$(grep -q "$SRC" < <(dmsetup deps -o devname) | awk '{print $1}' | tr -d ':')
-            VG_SRC_NAME=($(awk '{print $2}' < <(pvs --noheadings -o pv_name,vg_name | grep "$luks") | sort -u))
+            local luks=$(grep -q "$SRC" < <(dmsetup deps -o devname) | gawk '{print $1}' | tr -d ':')
+            VG_SRC_NAME=($(gawk '{print $2}' < <(pvs --noheadings -o pv_name,vg_name | grep "$luks") | sort -u))
         fi
     };_ #}}}
 
@@ -3171,15 +3168,15 @@ Main() { #{{{
     };_ #}}}
 
     SWAP_PART=$(if [[ -d $SRC ]]; then
-        grep 'swap' "$SRC/$F_PART_LIST" | awk '{print $1}' | cut -d '"' -f 2
+        grep 'swap' "$SRC/$F_PART_LIST" | gawk '{print $1}' | cut -d '"' -f 2
     else
-        lsblk -lpo name,fstype "$SRC" | grep swap | awk '{print $1}'
+        lsblk -lpo name,fstype "$SRC" | grep swap | gawk '{print $1}'
     fi)
 
     EFI_PART=$(if [[ -d $SRC ]]; then
-        grep "${ID_GPT_EFI^^}" "$SRC/$F_PART_TABLE" | awk '{print $1}'
+        grep "${ID_GPT_EFI^^}" "$SRC/$F_PART_TABLE" | gawk '{print $1}'
     else
-        sfdisk -d $SRC | grep "${ID_GPT_EFI^^}" | awk '{print $1}'
+        sfdisk -d $SRC | grep "${ID_GPT_EFI^^}" | gawk '{print $1}'
     fi)
 
     #Context already initialized, only when source is a disk is of interest here
