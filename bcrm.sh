@@ -633,7 +633,7 @@ mounts() { #{{{
         local mp mpnt sdev sid fs spid ptype type mountpoint rest
         local ldata=$(lsblk -lnpo name,kname,uuid,partuuid "$SRC")
 
-        _(){#{{{
+        _(){ #{{{
             local s
             for s in ${!SRCS[@]}; do
                 sid=$s
@@ -663,20 +663,20 @@ mounts() { #{{{
 
                 umount_ "$mp"
             done
-        };_#}}}
+        };_ #}}}
     else
         local files=()
         pushd "$SRC" >/dev/null || return 1
 
-        _(){#{{{
+        _(){ #{{{
             local file
             for file in [0-9]*; do
                 local k=$(echo "$file" | sed "s/\.[a-z]*$//")
                 files+=("$k")
             done
-        };_#}}}
+        };_ #}}}
 
-        _(){#{{{
+        _(){ #{{{
             local file
             for file in "${files[@]}"; do
                 local i uuid puuid fs type sused dev mnt dir user group
@@ -688,7 +688,7 @@ mounts() { #{{{
                 [[ -n ${puuid//NOVALUE/} ]] && MOUNTS[${puuid}]=$mnt
                 [[ -n ${uuid//NOVALUE/} ]] && MOUNTS[$uuid]="$mnt"
             done
-        };_#}}}
+        };_ #}}}
 
         popd >/dev/null || return 1
     fi
@@ -764,7 +764,7 @@ init_srcs() { #{{{
     local file="$1"
     (( ${#SRCS_ORDER} == 0 )) && SRCS_ORDER=($(lsblk -lno uuid "$SRC" | xargs))
 
-    _(){#{{{
+    _(){ #{{{
         local e
         while read -r e; do
             local name kdev fstype uuid puuid type parttype mountpoint size
@@ -790,9 +790,9 @@ init_srcs() { #{{{
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
             unset name kdev fstype uuid puuid type parttype mountpoint size
         done < <(echo "$file" | grep -v 'disk' | sort -k 1 -t ' ')
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         if [[ $_RMODE == true ]]; then
             pushd "$SRC" >/dev/null || return 1
             local f i uuid puuid fs type sused dev mnt
@@ -807,7 +807,7 @@ init_srcs() { #{{{
                 SRCS[$uuid]="${sname//NOVALUE/}:${sfstype//NOVALUE/}:${spartuuid//NOVALUE/}:${sparttype//NOVALUE/}:${stype//NOVALUE/}:${mp//NOVALUE/}:${sused//NOVALUE/}:${size//NOVALUE/}"
             done
         fi
-    };_#}}}
+    };_ #}}}
 } #}}}
 #}}}
 
@@ -1013,14 +1013,14 @@ expand_disk() { #{{{
 
     local expand_factor=$(echo "scale=4; $dest_size / $src_size" | bc)
 
-    _(){#{{{
+    _(){ #{{{
         if [[ $SWAP_SIZE -eq 0 && -n $SWAP_PART ]]; then
             local swap_part=${SWAP_PART////\\/} #Escape for sed interpolation
             pdata=$(echo "$pdata" | sed "/$swap_part/d")
         fi
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         local n=0
         while read -r name size; do
             if [[ (-n $BOOT_PART && $name == "$BOOT_PART") ||
@@ -1037,17 +1037,17 @@ expand_disk() { #{{{
                 ((n++))
             fi
         done < <(echo "$pdata" | grep '^/' | awk '{print $1,$6}')
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         local k
         for k in "${!var_parts[@]}"; do
             local nv=$(echo "${var_parts[$k]} * $expand_factor" | bc)
             var_parts[$k]=${nv%.*}
         done
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         local e
         while read -r e; do
             local size=$(echo "$e" | sed -E 's/.*size=\s*([0-9]*).*/\1/')
@@ -1062,9 +1062,9 @@ expand_disk() { #{{{
                 fi
             fi
         done < <(echo "$pdata" | grep '^/')
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         #Remove fixed offsets and only apply size values. We assume the extended partition ist last!
         pdata=$(sed 's/start=\s*\w*,//g' < <(echo "$pdata"))
         #When a field is absent or empty the default value of size indicates "as much as asossible";
@@ -1075,7 +1075,7 @@ expand_disk() { #{{{
         if [[ $SWAP_SIZE -eq 0 && $last_line =~ $swap_part || ! $last_line =~ $SWAP_PART ]]; then
             pdata=$(sed '$ s/size=\s*\w*,//g' < <(echo "$pdata"))
         fi
-    };_#}}}
+    };_ #}}}
 
     #Finally remove some headers
     pdata=$(sed '/last-lba:/d' < <(echo "$pdata"))
@@ -1095,12 +1095,12 @@ expand_disk() { #{{{
         esac
     }
 
-    _(){#{{{
+    _(){ #{{{
         local p
         for p in ${!TO_LVM[@]}; do
             _set_type "$p"
         done
-    };_#}}}
+    };_ #}}}
 
     if [[ $HAS_LUKS == true ]]; then
       [[ $HAS_EFI == true ]] && pdata=$(sed "s/${ID_GPT_LINUX^^}/${ID_GPT_LVM^^}/" < <(echo "$pdata"))
@@ -1118,25 +1118,25 @@ mbr2gpt() { #{{{
     local overlap=$(echo q | gdisk "$dest" | grep -E '\d*\s*blocks!' | awk '{print $1}')
     local pdata=$(sfdisk -d "$dest")
 
-    _(){#{{{
+    _(){ #{{{
         if [[ $overlap -gt 0 ]]; then
             local sectors=$(echo "$pdata" | tail -n 1 | grep -o -P 'size=\s*(\d*)' | awk '{print $2}')
             sfdisk "$dest" < <(echo "$pdata" | sed -e "$ s/$sectors/$((sectors - overlap))/")
         fi
-    };_#}}}
+    };_ #}}}
 
     sync_block_dev "$dest"
     sgdisk -z "$dest"
     sgdisk -g "$dest"
     sync_block_dev "$dest"
 
-    _(){#{{{
+    _(){ #{{{
         pdata=$(sfdisk -d "$dest")
         pdata=$(echo "$pdata" | grep 'size=' | sed -e 's/^[^,]*,\s*//; s/uuid=[a-Z0-9-]*,\{,1\}//')
         pdata=$(echo -e "size=1024000, type=${ID_GPT_EFI^^}\n${pdata}")
         local size=$(echo "$pdata" | grep -o -P 'size=\s*(\d*)' | awk '{print $2}' | tail -n 1)
         pdata=$(echo "$pdata" | sed -e "s/$size/$((size - 1024000))/") #TODO what if n partitions with the same size?
-    };_#}}}
+    };_ #}}}
 
     sfdisk "$dest" < <(echo "$pdata")
     sync_block_dev "$dest"
@@ -1294,7 +1294,7 @@ grub_setup() { #{{{
     sed -i 's/^/#/' "$mp/etc/crypttab"
     mount_chroot "$mp"
 
-    _(){#{{{
+    _(){ #{{{
         local m
         for m in $(echo ${!MOUNTS[@]} | tr ' ' '\n' | grep -E '^/' | grep -vE '^/dev' | sort -u); do
             if [[ -n ${SRC2DEST[${MOUNTS[$m]}]} ]]; then
@@ -1304,9 +1304,9 @@ grub_setup() { #{{{
                 unset ddev rest
             fi
         done
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         if [[ $uefi == true && $has_efi == true ]]; then
             local name uuid parttype
             read -r name uuid parttype <<<"$(lsblk -pPo name,uuid,parttype "$dest" | grep -i $ID_GPT_EFI)"
@@ -1319,7 +1319,7 @@ grub_setup() { #{{{
         for d in ${DISABLED_MOUNTS[@]}; do
             sed -i "\|\s$d\s| s|^|#|" "$mp/etc/fstab"
         done
-    };_#}}}
+    };_ #}}}
 
     if [[ $has_efi == true ]]; then
         local apt_pkgs="grub-efi-amd64-signed shim-signed"
@@ -1358,7 +1358,7 @@ crypt_setup() { #{{{
     mount_ "$d" && { mpnt=$(get_mount $d) || exit_ 1 "Could not find mount journal entry for $d. Aborting!"; }
     mount_chroot "$mp"
 
-    _(){#{{{
+    _(){ #{{{
         local m ddev rest
         for m in $(echo ${!MOUNTS[@]} | tr ' ' '\n' | grep -E '^/' | grep -vE '^/dev' | sort -u); do
             if [[ -n ${SRC2DEST[${MOUNTS[$m]}]} ]]; then
@@ -1366,9 +1366,9 @@ crypt_setup() { #{{{
                 mount_ "$ddev" -p "$mp/$m" || exit_ 1 "Failed to mount $ddev to ${mp/$m}."
             fi
         done
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         if [[ $UEFI == true && $HAS_EFI == true ]]; then
             local name uuid parttype
             read -r name uuid parttype <<<"$(lsblk -pPo name,uuid,parttype "$DEST" | grep -i $ID_GPT_EFI)"
@@ -1376,7 +1376,7 @@ crypt_setup() { #{{{
             echo -e "UUID=${UUID}\t/boot/efi\tvfat\tumask=0077\t0\t1" >>"$mp/etc/fstab"
             mkdir -p "$mp/boot/efi" && mount_ "$NAME" -p "$mp/boot/efi"
         fi
-    };_#}}}
+    };_ #}}}
 
     local apt_pkgs=(cryptsetup keyutils)
 
@@ -1606,7 +1606,7 @@ Cleanup() { #{{{
         flock -u 200
     } &>/dev/null
 
-    _(){#{{{
+    _(){ #{{{
         #Check if system files have been changed for execution and restore
         local f failed=()
         for f in "${!CHG_SYS_FILES[@]}"; do
@@ -1616,7 +1616,7 @@ Cleanup() { #{{{
                 failed+=("$f")
             fi
         done
-    };_#}}}
+    };_ #}}}
     [[ ${#failed[@]} -gt 0 ]] && message -n -t "Backups of original file(s) ${f[*]} changed. Will not restore. Check ${BACKUP_FOLDER}."
 
     exec 1>&3
@@ -1673,7 +1673,7 @@ To_file() { #{{{
         $LSBLK_CMD "$SRC" | grep -v "$snp" >"$F_PART_LIST"
     } #}}}
 
-    _(){#{{{
+    _(){ #{{{
         message -c -t "Creating backup of disk layout"
         {
             _save_disk_layout
@@ -1688,9 +1688,9 @@ To_file() { #{{{
             mounts
         }
         message -y
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         if [[ $IS_LVM ]]; then
             local vg_src_name=$(pvs --noheadings -o pv_name,vg_name | grep "$SRC" | xargs | awk '{print $2}')
             if [[ -z $vg_src_name ]]; then
@@ -1708,7 +1708,7 @@ To_file() { #{{{
                 | awk '{print $2}'
             )
         fi
-    };_#}}}
+    };_ #}}}
 
     local s g=0 mpnt sdev fs spid ptype type used size
 
@@ -1717,16 +1717,16 @@ To_file() { #{{{
         local cmd="tar --warning=none --atime-preserve=system --numeric-owner --xattrs --directory=$mpnt"
         local ss=${MOUNTS[$sdev]}
 
-        _(){#{{{
+        _(){ #{{{
             local x excl="--exclude='./run/*' --exclude='./tmp/*' --exclude='./proc/*' --exclude='./dev/*' --exclude='./sys/*'"
             for x in ${SRC_EXCLUDES[@]}; do
                 [[ $x =~ ^$ss ]] && excl="$excl --exclude=.$x"
             done
-        };_#}}}
+        };_ #}}}
 
         [[ -n $4 ]] && excludes=(${EXCLUDES[$4]//:/ })
 
-        _(){#{{{
+        _(){ #{{{
             if [[ -z $excludes ]]; then
                 cmd="$cmd $excl "
             else
@@ -1735,9 +1735,9 @@ To_file() { #{{{
                     cmd="$cmd --exclude='$ex'"
                 done
             fi
-        };_#}}}
+        };_ #}}}
 
-        _(){#{{{
+        _(){ #{{{
             if [[ $INTERACTIVE == true ]]; then
                 local ipc=$(mktemp)
                 du --bytes $excl -s -x $mpnt | awk '{print $1}' > $ipc &
@@ -1771,9 +1771,9 @@ To_file() { #{{{
                 fi
                 eval "$cmd"
             fi
-        };_#}}}
+        };_ #}}}
 
-        _(){#{{{
+        _(){ #{{{
             if [[ LIVE_CHECKSUMS == true ]]; then
                 logmsg "Creating Checksums for backup of $sdev"
                 path="$(dirname $(readlink -f "$file"))"
@@ -1784,12 +1784,12 @@ To_file() { #{{{
                     [[ -f $l ]] && md5sum "$l" >> "$path/${file}.md5"
                 done < "$path/${file}.list"
             fi
-        };_#}}}
+        };_ #}}}
         message -y
         g=$((g + 1))
     } #}}}
 
-    _(){#{{{
+    _(){ #{{{
         #TODO check usage of mount, mountpoint. Should be only one in use.
         local s
         for s in ${!SRCS[@]}; do
@@ -1824,7 +1824,7 @@ To_file() { #{{{
 
             _copy "$sdev" $mpnt "$file"
 
-            _(){#{{{
+            _(){ #{{{
                 local em
                 for em in ${!EXT_PARTS[@]}; do
                     local l=${MOUNTS[$s]}
@@ -1842,13 +1842,13 @@ To_file() { #{{{
                         umount_ "$e"
                     fi
                 done
-            };_#}}}
+            };_ #}}}
 
             [[ -f $mpnt/grub/grub.cfg || -f $mpnt/grub.cfg || -f $mpnt/boot/grub/grub.cfg ]] && HAS_GRUB=true
             umount_ "$tdev"
             [[ $type == lvm ]] && lvremove -f "${VG_SRC_NAME}/$SNAP4CLONE"
         done
-    };_#}}}
+    };_ #}}}
 
     popd >/dev/null || return 1
 
@@ -1946,7 +1946,7 @@ Clone() { #{{{
         [[ -n $SWAP_PART ]] && _create_fixed "$SWAP_PART" $SWAP_SIZE
         [[ -n $BOOT_PART ]] && _create_fixed "$BOOT_PART" $BOOT_SIZE
 
-        _(){#{{{
+        _(){ #{{{
             local vg_name vg_size vg_free e src_vg_free e
             while read -r e; do
                 read -r vg_name vg_size vg_free <<<"$e"
@@ -1954,9 +1954,9 @@ Clone() { #{{{
                 [[ $vg_name == "$VG_SRC_NAME_CLONE" ]] && s2=$((${vg_free%%.*} - $fixd_size_dest - $VG_FREE_SIZE))
             done < <(echo "$vg_data")
             [[ $VG_FREE_SIZE -eq 0  ]] && s2=$((s2 - src_vg_free))
-        };_#}}}
+        };_ #}}}
 
-        _(){#{{{
+        _(){ #{{{
             local sname fs spid ptype type used mp size lsize lv_size f
             for f in ${!SRCS[@]}; do
                 IFS=: read -r sname fs spid ptype type mp used size <<<"${SRCS[$f]}"
@@ -1965,9 +1965,9 @@ Clone() { #{{{
                     s2=$((s2 - lv_size))
                 fi
             done
-        };_#}}}
+        };_ #}}}
 
-        _(){#{{{
+        _(){ #{{{
             if [[ ($ALL_TO_LVM == true || ${#TO_LVM[@]} -gt 0) && $IS_LVM == false ]]; then
                 local vg_name vg_size vg_free e
                 while read -r e; do
@@ -1985,13 +1985,13 @@ Clone() { #{{{
                     s1=$((s1 - src_swap - fixd_size_src))
                 fi
             fi
-        };_#}}}
+        };_ #}}}
 
         scale_factor=$(echo "scale=4; $s2 / $s1" | bc)
 
         #TODO rework this and the next block. Currently there are two stage, LVM and ALL_TO_LVM using SRC
         #SWAP is excluded from LVM conversion, too
-        _(){#{{{
+        _(){ #{{{
             local lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path e size
             while read -r e; do
                 read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"$e"
@@ -2008,9 +2008,9 @@ Clone() { #{{{
                     fi
                 fi
             done < <(echo "$lvm_data")
-        };_#}}}
+        };_ #}}}
 
-        _(){#{{{
+        _(){ #{{{
             local sname fs spid ptype type mp used size f lsize lv_size
             for f in "${!SRCS[@]}"; do
                 IFS=: read -r sname fs spid ptype type mp used size <<<"${SRCS[$f]}"
@@ -2030,20 +2030,20 @@ Clone() { #{{{
                     lvcreate --yes -L$lv_size -n "${TO_LVM[$sname]}" "$VG_SRC_NAME_CLONE" || return 1
                 fi
             done
-        };_#}}}
+        };_ #}}}
 
         [[ -n $LVM_EXPAND ]] && lvcreate --yes -l"${LVM_EXPAND_BY:-100}%FREE" -n "$LVM_EXPAND" "$VG_SRC_NAME_CLONE"
 
-        _(){#{{{
+        _(){ #{{{
             local name fs pid ptype type mp used size f
             for f in "${!SRCS[@]}"; do
                 IFS=: read -r name fs pid ptype type mp used size <<<"${SRCS[$f]}"
                 [[ $type == 'lvm' ]] && src_lfs[${name##*-}]=$fs
                 [[ $type == 'part' ]] && grep -qE "${name}" < <(echo "${!TO_LVM[@]}" | tr ' ' '\n') && src_lfs[${TO_LVM[$name]}]=$fs
             done
-        };_#}}}
+        };_ #}}}
 
-        _(){#{{{
+        _(){ #{{{
             local lv_name dm_path type e
             while read -r e; do
                 read -r lv_name dm_path type <<<"$e"
@@ -2051,7 +2051,7 @@ Clone() { #{{{
                 [[ -z ${src_lfs[$lv_name]} ]] && exit_ 1 "Unexpected Error" #Yes, I know... but has to do for the moment!
                 { [[ "${src_lfs[$lv_name]}" == swap ]] && mkswap -f "$dm_path"; } || mkfs -t "${src_lfs[$lv_name]}" "$dm_path"
             done < <(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | awk '{print $1,$2}')
-        };_#}}}
+        };_ #}}}
     } #}}}
 
     _prepare_disk() { #{{{
@@ -2141,7 +2141,7 @@ Clone() { #{{{
                 local cmd="tar --warning=none --same-owner -xf - -C $mpnt"
                 [[ -n $XZ_OPT ]] && cmd="$cmd --xz"
 
-                _(){#{{{
+                _(){ #{{{
                     if [[ $INTERACTIVE == true ]]; then
                         local size=$(du --bytes -c "${SRC}/${file}" | tail -n1 | awk '{print $1}')
                         cmd="pv --interval 0.5 --numeric -s $size \"${SRC}\"/${file}* | $cmd"
@@ -2159,7 +2159,7 @@ Clone() { #{{{
                         [[ $fs == vfat ]] && cmd="fakeroot $cmd"
                         eval "$cmd"
                     fi
-                };_#}}}
+                };_ #}}}
 
                 # Tar will change parent folder permissions because all contend was saved with '.'.
                 # So we either restore the original values or the ones provided by argument overwrites.
@@ -2194,14 +2194,14 @@ Clone() { #{{{
             [[ -n $5 ]] && excludes=(${EXCLUDES[$5]//:/ })
             local ss=${MOUNTS[$sdev]}
 
-            _(){#{{{
+            _(){ #{{{
                 local x
                 for x in ${SRC_EXCLUDES[@]}; do
                     [[ $ss =~ $x ]] && cmd="$cmd --exclude='./$x'"
                 done
-            };_#}}}
+            };_ #}}}
 
-            _(){#{{{
+            _(){ #{{{
                 local ex
                 if [[ -n $excludes ]]; then
                     for ex in ${excludes[@]}; do
@@ -2210,9 +2210,9 @@ Clone() { #{{{
                 else
                     cmd='--exclude=./run/* --exclude="./tmp/*" --exclude="./proc/*" --exclude="./dev/*" --exclude="./sys/*"'
                 fi
-            };_#}}}
+            };_ #}}}
 
-            _(){#{{{
+            _(){ #{{{
                 if [[ $INTERACTIVE == true ]]; then
                     ipc=$(mktemp)
                     find "$smpnt" -xdev -type f,d,l -not \( ${cmd//--exclude=/-path } \) | wc -l > $ipc &
@@ -2229,7 +2229,7 @@ Clone() { #{{{
                     message -c -t "Cloning $sdev to $ddev"
                     rsync -aSXxH $cmd "$smpnt/" "$dmpnt"
                 fi
-            };_#}}}
+            };_ #}}}
             message -y
         } #}}}
 
@@ -2272,7 +2272,7 @@ Clone() { #{{{
 
             _copy "$sdev" "$ddev" "$smpnt" "$dmpnt"
 
-            _(){#{{{
+            _(){ #{{{
                 local em
                 for em in ${!EXT_PARTS[@]}; do
                     local e=${EXT_PARTS[$em]}
@@ -2295,7 +2295,7 @@ Clone() { #{{{
                         umount_ "$e"
                     fi
                 done
-            };_#}}}
+            };_ #}}}
 
             _finish "$dmpnt"
             umount_ "$ddev"
@@ -2333,7 +2333,7 @@ Clone() { #{{{
         [[ $_RMODE == true ]] && eval $(cat $F_DEVICE_MAP)
         mounts
 
-        _(){#{{{
+        _(){ #{{{
             if [[ $ALL_TO_LVM == true ]]; then
                 local y sdevname fs spid ptype type rest
                 for y in "${SRCS_ORDER[@]}"; do
@@ -2347,9 +2347,9 @@ Clone() { #{{{
                     fi
                 done
             fi
-        };_#}}}
+        };_ #}}}
 
-        _(){#{{{
+        _(){ #{{{
             if [[ -n $ENCRYPT_PWD ]]; then
                 local f name fstype partuuid parttype type used avail
                 for f in "${SRCS_ORDER[@]}"; do
@@ -2360,12 +2360,12 @@ Clone() { #{{{
                     fi
                 done
             fi
-        };_#}}}
+        };_ #}}}
 
         _prepare_disk
         sync_block_dev $DEST
 
-        _(){#{{{
+        _(){ #{{{
             if [[ -n $ENCRYPT_PWD ]]; then
                 if [[ $HAS_EFI == true ]]; then
                     local dev type
@@ -2379,7 +2379,7 @@ Clone() { #{{{
                 _lvm_setup "$DEST" || exit_ 1 "LVM setup failed!"
                 sleep 3
             fi
-        };_#}}}
+        };_ #}}}
 
         #Now collect what we have created
         set_dest_uuids
@@ -2395,7 +2395,7 @@ Clone() { #{{{
 
     if [[ $HAS_GRUB == true ]]; then
         message -c -t "Running boot setup"
-        _(){#{{{
+        _(){ #{{{
             local ddev rest
             IFS=: read -r ddev rest <<<${DESTS[${SRC2DEST[${MOUNTS['/']}]}]}
             [[ -z $ddev ]] && exit_ 1 "Unexpected error - empty destination."
@@ -2404,7 +2404,7 @@ Clone() { #{{{
             else
                 grub_setup "$ddev" "$HAS_EFI" "$UEFI" "$DEST" || { message -r -w && return 1; }
             fi
-        };_#}}}
+        };_ #}}}
         message -y
     fi
     return 0
@@ -2536,7 +2536,7 @@ Main() { #{{{
             umount_ "$mp"
         } #}}}
 
-        _(){#{{{
+        _(){ #{{{
             local mpnt f name mountpoint fstype type
             if [[ $IS_LVM == true ]]; then
                 local parts=$(lsblk -lpo name,fstype,mountpoint | grep "${VG_SRC_NAME//-/--}-" | grep -iv 'swap')
@@ -2551,7 +2551,7 @@ Main() { #{{{
                     [[ -n $fstype ]] && _set "$name" "$mountpoint"
                 done <<<"$parts"
             fi
-        };_#}}}
+        };_ #}}}
         [[ -z $boot_part ]] && return 1 || return 0
     } #}}}
 
@@ -2681,7 +2681,7 @@ Main() { #{{{
         fi
     done
 
-    _(){#{{{
+    _(){ #{{{
         local k
         for k in ${!PARAMS[@]}; do
             case "$k" in
@@ -2867,7 +2867,7 @@ Main() { #{{{
                 ;;
             esac
         done
-    };_#}}}
+    };_ #}}}
 
     hash pv &>/dev/null && INTERACTIVE=true || message -i -t "No progress will be shown. Consider installing package: pv"
 
@@ -2882,7 +2882,7 @@ Main() { #{{{
     PKGS+=(awk rsync tar flock bc blockdev fdisk sfdisk locale-gen git mkfs.vfat parted)
     [[ -d $SRC ]] && PKGS+=(fakeroot) && _RMODE=true
 
-    _(){#{{{
+    _(){ #{{{
         local packages=()
         #Inform about ALL missing but necessary tools.
         for c in "${PKGS[@]}"; do
@@ -2909,7 +2909,7 @@ Main() { #{{{
                 abort='exit_ 1'
             }
         done
-    };_#}}}
+    };_ #}}}
 
     exec >$F_LOG 2>&1
 
@@ -2975,7 +2975,7 @@ Main() { #{{{
             exit_ 1 "Cannot clone UEFI system. Current running system does not support UEFI."
     fi
 
-    _(){#{{{
+    _(){ #{{{
         if [[ -b $DEST ]]; then
             local pv_name vg_name
             read -r pv_name vg_name < <(pvs -o pv_name,vg_name --no-headings | grep "$DEST")
@@ -2994,14 +2994,14 @@ Main() { #{{{
             fi
             unset pv_name vg_name
         fi
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         local d
         for d in "$SRC" "$DEST"; do
             [[ -b $d ]] && _validate_block_device $d
         done
-    };_#}}}
+    };_ #}}}
 
     [[ $(realpath "$SRC") == $(realpath "$DEST") ]] &&
         exit_ 1 "Source and destination cannot be the same!"
@@ -3009,7 +3009,7 @@ Main() { #{{{
     [[ -n $(lsblk --noheadings -o mountpoint $DEST 2>/dev/null) ]] &&
         exit_ 1 "Invalid device condition. Some or all partitions of $DEST are mounted."
 
-    _(){#{{{
+    _(){ #{{{
         local part
         for part in ${EXT_PARTS[@]}; do
             if [[ -b $SRC ]]; then
@@ -3019,19 +3019,19 @@ Main() { #{{{
                 grep "^$part/*\$" -q < <(lsblk -lnpo name "$DEST") && exit_ 2 "Cannot include partition ${part}. It is part of the destination device ${DEST}."
             fi
         done
-    };_#}}}
+    };_ #}}}
 
     [[ $PVALL == true && -n $ENCRYPT_PWD ]] && exit_ 1 "Encryption only supported for simple LVM setups with a single PV!"
 
-    _(){#{{{
+    _(){ #{{{
         #If empty, nothing happens!
         local l
         for l in ${!TO_LVM[@]}; do
             _is_partition $l || exit_ 1 "$l is not a valid source partition for LV conversion!"
         done
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         #Check that all expected files exists when restoring
         if [[ -d $SRC ]]; then
             local meta_files=("$F_CONTEXT" "$F_PART_LIST" "$F_DEVICE_MAP" "$F_VENDOR_LIST" "$F_PART_TABLE")
@@ -3054,7 +3054,7 @@ Main() { #{{{
                 grep "$f\$" <(ls -A "$SRC") || exit_ 2 "$SRC folder missing files."
             done
         fi
-    };_#}}}
+    };_ #}}}
 
     if [[ -d $SRC && $IS_CHECKSUM == true ]]; then
         message -c -t "Validating checksums"
@@ -3072,7 +3072,7 @@ Main() { #{{{
 
     [[ $HAS_EFI == true && $UEFI == true ]] && UEFI=false #Ignore -u if destination is alread EFI-enabled.
 
-    _(){#{{{
+    _(){ #{{{
         local src_size=0
         if [[ -d $SRC ]]; then
             src_size=$(sector_to_mbyte $SECTORS_SRC_USED)
@@ -3093,9 +3093,9 @@ Main() { #{{{
 
         [[ -b $DEST ]] \
             && SECTORS_DEST=$(to_sector ${dest_size}M)
-    };_#}}}
+    };_ #}}}
 
-    _(){#{{{
+    _(){ #{{{
         #Make sure source or destination folder are not mounted on the same disk to backup to or restore from.
         local d
         for d in "$SRC" "$DEST" "$DEST_IMG"; do
@@ -3107,20 +3107,20 @@ Main() { #{{{
                 [[ ${disk[-1]} == "$SRC" || ${disk[-1]} == "$DEST" ]] && exit_ 1 "Source and destination cannot be the same!"
             fi
         done
-    };_#}}}
+    };_ #}}}
 
     VG_SRC_NAME=($(awk '{print $2}' < <(if [[ -d $SRC && $IS_LVM == true ]]; then cat "$SRC/$F_PVS_LIST"; else pvs --noheadings -o pv_name,vg_name | grep "$SRC"; fi) | sort -u))
 
-    _(){#{{{
+    _(){ #{{{
         if [[ -z $VG_SRC_NAME && $HAS_LUKS == true ]]; then
             local luks=$(grep -q "$SRC" < <(dmsetup deps -o devname) | awk '{print $1}' | tr -d ':')
             VG_SRC_NAME=($(awk '{print $2}' < <(pvs --noheadings -o pv_name,vg_name | grep "$luks") | sort -u))
         fi
-    };_#}}}
+    };_ #}}}
 
     [[ ${#VG_SRC_NAME[@]} -gt 1 ]] && exit_ 1 "Unsupported situation: PVs of $SRC assigned to multiplge VGs."
 
-    _(){#{{{
+    _(){ #{{{
         if [[ -z $VG_SRC_NAME ]]; then
             while read -r e g; do
                 grep -q ${SRC##*/} < <(dmsetup deps -o devname | sort -u | sed 's/.*(\(\w*\).*/\1/g') && VG_SRC_NAME=$g
@@ -3131,13 +3131,13 @@ Main() { #{{{
                 grep -q lvm < <(lsblk -lpo type $SRC) || exit_ 1 "Found LVM, but LVs have not been activated. Did you forget to run 'vgchange -ay $VG_SRC_NAME' ?"
             fi
         fi
-    };_#}}}
+    };_ #}}}
 
     [[ $SRC == "$ROOT_DISK" && $IS_LVM == false && $IS_CHECKSUM == true ]] && LIVE_CHECKSUMS=false && message -w -t "No LVM system detected. File integrity checks disabled."
 
     [[ $ALL_TO_LVM == true && -z $VG_SRC_NAME && -z $VG_SRC_NAME_CLONE && ! -d $DEST ]] && exit_ 1 "You need to provide a VG name when convertig a standard disk to LVM."
 
-    _(){#{{{
+    _(){ #{{{
         if [[ $IS_LVM == true ]]; then
             local l lvs=$(lvs --no-headings -o lv_name $VG_SRC_NAME | xargs | tr ' ' '\n')
             for l in ${!TO_LVM[@]}; do
@@ -3165,7 +3165,7 @@ Main() { #{{{
                 fi
             fi
         fi
-    };_#}}}
+    };_ #}}}
 
     SWAP_PART=$(if [[ -d $SRC ]]; then
         grep 'swap' "$SRC/$F_PART_LIST" | awk '{print $1}' | cut -d '"' -f 2
