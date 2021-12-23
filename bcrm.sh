@@ -1674,45 +1674,6 @@ To_file() { #{{{
         $LSBLK_CMD "$SRC" | grep -v "$snp" >"$F_PART_LIST"
     } #}}}
 
-    _(){ #{{{
-        message -c -t "Creating backup of disk layout"
-        {
-            _save_disk_layout
-            init_srcs "$($LSBLK_CMD ${VG_DISKS[@]:-$SRC})"
-
-            local av
-            for k in "${!DEVICE_MAP[@]}"; do
-                av+="[$k]=\"${DEVICE_MAP[$k]}\" ";
-            done
-
-            echo "DEVICE_MAP=($av)" > $F_DEVICE_MAP
-            mounts
-        }
-        message -y
-    };_ #}}}
-
-    _(){ #{{{
-        if [[ $IS_LVM ]]; then
-            local vg_src_name=$(pvs --noheadings -o pv_name,vg_name | grep "$SRC" | xargs | gawk '{print $2}')
-            if [[ -z $vg_src_name ]]; then
-                while read -r e g; do
-                    grep -q "${SRC##*/}" < <(dmsetup deps -o devname "$e" | sed 's/.*(\(\w*\).*/\1/g') && vg_src_name="$g"
-                done < <(pvs --noheadings -o pv_name,vg_name | xargs)
-            fi
-
-            local lvs_data=$(lvs --noheadings -o lv_name,lv_dm_path,vg_name \
-                | grep "\b${vg_src_name}\b"
-            )
-
-            local src_vg_free=$( vgs --noheadings --units m --nosuffix -o vg_name,vg_free \
-                | grep "\b${vg_src_name}\b" \
-                | gawk '{print $2}'
-            )
-        fi
-    };_ #}}}
-
-    local s g=0 mpnt sdev fs spid ptype type used size
-
     _copy() { #{{{
         local sdev="$1" mpnt="$2" file="$3" excludes=()
         local cmd="tar --warning=none --atime-preserve=system --numeric-owner --xattrs --directory=$mpnt"
@@ -1791,8 +1752,43 @@ To_file() { #{{{
     } #}}}
 
     _(){ #{{{
+        message -c -t "Creating backup of disk layout"
+        {
+            _save_disk_layout
+            init_srcs "$($LSBLK_CMD ${VG_DISKS[@]:-$SRC})"
+
+            local av
+            for k in "${!DEVICE_MAP[@]}"; do
+                av+="[$k]=\"${DEVICE_MAP[$k]}\" ";
+            done
+
+            echo "DEVICE_MAP=($av)" > $F_DEVICE_MAP
+            mounts
+        }
+        message -y
+    };_ #}}}
+
+    if [[ $IS_LVM ]]; then
+        local vg_src_name=$(pvs --noheadings -o pv_name,vg_name | grep "$SRC" | xargs | gawk '{print $2}')
+        if [[ -z $vg_src_name ]]; then
+            while read -r e g; do
+                grep -q "${SRC##*/}" < <(dmsetup deps -o devname "$e" | sed 's/.*(\(\w*\).*/\1/g') && vg_src_name="$g"
+            done < <(pvs --noheadings -o pv_name,vg_name | xargs)
+        fi
+
+        local lvs_data=$(lvs --noheadings -o lv_name,lv_dm_path,vg_name \
+            | grep "\b${vg_src_name}\b"
+        )
+
+        local src_vg_free=$( vgs --noheadings --units m --nosuffix -o vg_name,vg_free \
+            | grep "\b${vg_src_name}\b" \
+            | gawk '{print $2}'
+        )
+    fi
+
+    _(){ #{{{
         #TODO check usage of mount, mountpoint. Should be only one in use.
-        local s
+        local s g=0 mpnt sdev fs spid ptype type used size
         for s in ${!SRCS[@]}; do
             local tdev sid=$s
             IFS=: read -r sdev fs spid ptype type mountpoint used size <<<${SRCS[$s]}
