@@ -1,7 +1,7 @@
 #! /usr/bin/env bash
 # shellcheck disable=SC2155,SC2153,SC2015,SC2094,SC2016,SC2034
 
-# Copyright (C) 2017-2021 Marcel Lautenbach {{{
+# Copyright (C) 2017-2022 Marcel Lautenbach {{{
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License asublished by
@@ -207,9 +207,11 @@ usage() { #{{{
     printf "  %-3s %-30s %s\n"   "   " ""                        "Useful when tracking down errors with --schroot."
     printf "  %-3s %-30s %s\n"   "   " "--disable-mount"         "Disable the given mount point in <destination>/etc/fstab."
     printf "  %-3s %-30s %s\n"   "   " ""                        "For instance --disable-mount /some/path. Can be used multiple times."
-    printf "  %-3s %-30s %s\n"   "   " "--to-lvm"                "Convert given source partition to LV. E.g. '/dev/sda1:boot' would be"
-    printf "  %-3s %-30s %s\n"   "   " ""                        "converted to LV with the name 'boot' Can be used multiple times."
+    printf "  %-3s %-30s %s\n"   "   " "--to-lvm"                "Convert given source partition or folder to LV. E.g. '/dev/sda1:boot' would be"
+    printf "  %-3s %-30s %s\n"   "   " ""                        "converted to LV with the name 'boot'. Can be used multiple times."
     printf "  %-3s %-30s %s\n"   "   " ""                        "Only works for partitions that have a valid mountpoint in fstab"
+    printf "  %-3s %-30s %s\n"   "   " ""                        "To convert a folder, e.g /var, to LVM you have to specify the LV size."
+    printf "  %-3s %-30s %s\n"   "   " ""                        "For example: '/var:var:5G'."
     printf "  %-3s %-30s %s\n"   "   " "--all-to-lvm"            "Convert all source partitions to LV. (except EFI)"
     printf "  %-3s %-30s %s\n"   "   " "--include-partition"     "Also include the content of the given partition to the specified path."
     printf "  %-3s %-30s %s\n"   "   " ""                        "E.g: 'part=/dev/sdX,dir=/some/path/,user=1000,group=10001,exclude=fodler1,folder2'"
@@ -444,6 +446,8 @@ ctx_save() { #{{{
     echo "# Version used: $VERSION" >>"$DEST/$F_CONTEXT"
 } #}}}
 
+#}}}
+
 #--- Wrappers ---- {{{
 
 # By convention methods ending with a '_' wrap shell functions or commands with the same name.
@@ -459,10 +463,48 @@ exit_(){ #{{{
 
 #--- Mounting ---{{{
 
+mount_exta_lvm() { #{{{
+    local OPTIND
+    local option
+    while getopts ':s:d:c' option; do
+        case "$option" in
+        s)
+			local smpnt="$OPTARG"
+            ;;
+        d)
+			local dmpnt="$OPTARG"
+            ;;
+        c)
+            local create="true"
+            ;;
+        :)
+            exit_ 5 "Method call error: \t${FUNCNAME[0]}()\tMissing argument for $OPTARG"
+            ;;
+        ?)
+            exit_ 5 "Method call error: \t${FUNCNAME[0]}()\tIllegal option: $OPTARG"
+            ;;
+        esac
+    done
+
+    shift $((OPTIND - 1))
+
+    local -A arr
+    while read -r k v; do arr[$k]=$v; done <<<$(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
+    local l name
+    for l in "${!TO_LVM[@]}"; do
+        IFS=: read -r name size fs <<<"${TO_LVM[$l]}"
+        if [[ -n ${arr[$name]} ]]; then
+            [[ -n $smpnt ]] && rsync -av -f"+ $l" -f"- *" $smpnt/$l $dmpnt
+			[[ $create == true ]] && mkdir -p $dmpnt/$l
+			mount_ ${arr[$name]} -p $dmpnt/$l
+        fi
+    done
+} #}}}
+
 find_mount_part() { #{{{
-    local x
-    for x in $(echo ${!MOUNTS[@]} | tr ' ' '\n' | sort -r | grep -E '^/' | grep -v -E '^/dev/'); do
-        [[ $1 =~ $x ]] && echo $x && return 0
+    local m
+    for m in $(echo ${!MOUNTS[@]} | tr ' ' '\n' | sort -r | grep -E '^/' | grep -v -E '^/dev/'); do
+        [[ $1 =~ $m ]] && echo $m && return 0
     done
 } #}}}
 
@@ -511,13 +553,13 @@ mount_(){ #{{{
 umount_() { #{{{
     local OPTIND
     local cmd="umount -l"
-    local mnt=$(realpath -s "$1")
 
     local option
     while getopts ':R' option; do
         case "$option" in
         R)
             cmd+=" -R"
+            local OPT_R='true'
             ;;
         :)
             printf "missing argument for -%s\n" "$OPTARG" >&2
@@ -529,14 +571,23 @@ umount_() { #{{{
     done
     shift $((OPTIND - 1))
 
+    local mnt=$(realpath -s "$1")
+
     if [[ $# -eq 0 ]]; then
         local m
         for m in "${MNTJRNL[@]}"; do $cmd -l "$m"; done
         return 0
     fi
 
+    #TODO validate mounts in list and use return instead of exit
     logmsg "$cmd ${MNTJRNL[$mnt]}"
-    if [[ -n ${MNTJRNL[$mnt]} ]]; then
+    local x=${MNTJRNL[$mnt]}
+    if [[ $OPT_R == true ]]; then
+        $cmd ${MNTJRNL[$mnt]} || exit_ 1
+        for f in "${!MNTJRNL[@]}"; do
+            [[ ${MNTJRNL[$f]} =~ $x ]] && unset MNTJRNL[$f]
+        done
+    else
         { $cmd ${MNTJRNL[$mnt]} && unset MNTJRNL[$mnt]; } || exit_ 1
     fi
 } #}}}
@@ -704,10 +755,32 @@ set_dest_uuids() { #{{{
         [[ $IS_LVM == true ]] && vgchange -ay "$VG_SRC_NAME_CLONE"
     fi
 
+    local lvs_list=$(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
+
+    _is_lvm_candidate() {
+        local path="$1"
+        local lv_name dm_path line
+
+        while read -r line; do
+            read -r lv_name dm_path <<<"$line"
+            if [[ $path == "$dm_path" ]]; then
+				local l name _
+                for l in "${TO_LVM[@]}"; do
+                    IFS=: read -r name _ <<<"$l"
+                    [[ $name == "$lv_name" ]] && return 0
+                done
+            fi
+        done < <(echo "$lvs_list")
+
+        return 1
+    }
+
     local name kdev fstype uuid puuid type parttype mountpoint size e
     while read -r e; do
         read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
         eval local "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
+
+        _is_lvm_candidate $NAME && { update_dest_order "$UUID"; continue; }
 
         #Filter all we don't want
         { [[ $FSTYPE == swap ]] ||
@@ -992,7 +1065,7 @@ expand_disk() { #{{{
     local dest_size=$2
     local pdata="$3"
     local -n pdata_new=$4
-    local -n swap_size=0
+    local -i swap_size=0
     local size
     local new_size
 
@@ -1098,8 +1171,8 @@ expand_disk() { #{{{
 
     _(){ #{{{
         local p
-        for p in ${!TO_LVM[@]}; do
-            _set_type "$p"
+        for p in "${!TO_LVM[@]}"; do
+            [[ ! -d $p ]] && _set_type "$p"
         done
     };_ #}}}
 
@@ -1184,7 +1257,7 @@ disk_setup() { #{{{
         plist=$(printf "%s\n" "${plist[@]}" | sort -k 1 -t ' ')
 
         local e
-        local -n n=0
+        local -i n=0
         while read -r e; do
             local name kname fstype uuid partuuid type parttype
             read -r name kname fstype uuid partuuid type parttype <<<"$e"
@@ -1305,6 +1378,8 @@ grub_setup() { #{{{
                 unset ddev rest
             fi
         done
+
+        mount_exta_lvm -d $mp
     };_ #}}}
 
     _(){ #{{{
@@ -1573,7 +1648,7 @@ sector_to_tbyte() { #{{{
     echo $((v / (2 * 2 ** 30)))
 } #}}}
 #}}}
-#}}}
+
 #}}}
 
 # PUBLIC - To be used in Main() only ----------------------------------------------------------------------------------{{{
@@ -1945,6 +2020,23 @@ Clone() { #{{{
         [[ -n $BOOT_PART ]] && _create_fixed "$BOOT_PART" $BOOT_SIZE
 
         _(){ #{{{
+            local l
+            for l in ${!TO_LVM[@]}; do
+                if [[ -d $l ]]; then
+                    IFS=: read -r lv_name size fs <<<"${TO_LVM[$l]}"
+                    local size=$(to_mbyte $size)
+                    local part_size_src=${size%%.*}
+                    local part_size_dest=${size%%.*}
+
+                    if [[ $part_size_dest -gt 0 ]]; then
+                        fixd_size_dest+=$part_size_dest
+                        lvcreate --yes -L$part_size_dest -n $lv_name "$VG_SRC_NAME_CLONE"
+                    fi
+                fi
+            done
+        };_ #}}}
+
+        _(){ #{{{
             local vg_name vg_size vg_free e src_vg_free e
             while read -r e; do
                 read -r vg_name vg_size vg_free <<<"$e"
@@ -1999,10 +2091,10 @@ Clone() { #{{{
                     [[ $lv_role =~ snapshot ]] && continue
 
                     if ((s1 < s2)); then
-                        lvcreate --yes -L"${lv_size%%.*}" -n "$lv_name" "$VG_SRC_NAME_CLONE"
+                        lvcreate --yes -L"${lv_size%%.*}" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
                     else
                         size=$(echo "scale=4; $lv_size * $scale_factor" | bc)
-                        lvcreate --yes -L${size%%.*} -n "$lv_name" "$VG_SRC_NAME_CLONE"
+                        lvcreate --yes -L${size%%.*} -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
                     fi
                 fi
             done < <(echo "$lvm_data")
@@ -2033,11 +2125,19 @@ Clone() { #{{{
         [[ -n $LVM_EXPAND ]] && lvcreate --yes -l"${LVM_EXPAND_BY:-100}%FREE" -n "$LVM_EXPAND" "$VG_SRC_NAME_CLONE"
 
         _(){ #{{{
-            local name fs pid ptype type mp used size f
-            for f in "${!SRCS[@]}"; do
-                IFS=: read -r name fs pid ptype type mp used size <<<"${SRCS[$f]}"
+            local name fs pid ptype type mp used size
+
+			local s
+            for s in "${!SRCS[@]}"; do
+                IFS=: read -r name fs pid ptype type mp used size <<<"${SRCS[$s]}"
                 [[ $type == 'lvm' ]] && src_lfs[${name##*-}]=$fs
                 [[ $type == 'part' ]] && grep -qE "${name}" < <(echo "${!TO_LVM[@]}" | tr ' ' '\n') && src_lfs[${TO_LVM[$name]}]=$fs
+            done
+
+			local l
+            for l in "${!TO_LVM[@]}"; do
+                IFS=: read -r lv_name size fs <<<"${TO_LVM[$l]}"
+                src_lfs[$lv_name]=$fs
             done
         };_ #}}}
 
@@ -2131,6 +2231,8 @@ Clone() { #{{{
                     o_user=$(stat -c "%u" "$mpnt")
                     o_group=$(stat -c "%g" "$mpnt")
                 fi
+
+				[[ $mnt == / ]] && mount_exta_lvm -d $mpnt -c
                 pushd "$mpnt" >/dev/null || return 1
 
                 ((davail - sused <= 0)) \
@@ -2178,7 +2280,7 @@ Clone() { #{{{
 
                 popd >/dev/null || return 1
                 _finish "$mpnt" 2>/dev/null
-                umount_ "$ddev"
+                umount_ -R "$ddev" #-R in case TO_LVM has folders!
             fi
             message -y
         done
@@ -2189,24 +2291,25 @@ Clone() { #{{{
 
         _copy() { #{{{
             local sdev=$1 ddev=$2 smpnt=$3 dmpnt=$4 excludes=() cmd
-            [[ -n $5 ]] && excludes=(${EXCLUDES[$5]//:/ })
             local ss=${MOUNTS[$sdev]}
+
+            [[ -n $5 ]] && excludes=(${EXCLUDES[$5]//:/ })
 
             _(){ #{{{
                 local x
-                for x in ${SRC_EXCLUDES[@]}; do
-                    [[ $ss =~ $x ]] && cmd="$cmd --exclude='./$x'"
+                for x in "${SRC_EXCLUDES[@]}"; do
+                    [[ $ss =~ $x ]] && cmd="$cmd --exclude='/$x'"
                 done
             };_ #}}}
 
             _(){ #{{{
-                local ex
+                local x
                 if [[ -n $excludes ]]; then
-                    for ex in ${excludes[@]}; do
-                        cmd="$cmd --exclude='./$ex'"
+                    for x in "${excludes[@]}"; do
+                        cmd="$cmd --exclude='/$x'"
                     done
                 else
-                    cmd='--exclude=./run/* --exclude="./tmp/*" --exclude="./proc/*" --exclude="./dev/*" --exclude="./sys/*"'
+                    cmd='--exclude="/run/*" --exclude="/tmp/*" --exclude="/proc/*" --exclude="/dev/*" --exclude="/sys/*"'
                 fi
             };_ #}}}
 
@@ -2221,11 +2324,11 @@ Clone() { #{{{
                     while read -r e; do
                         [[ $e -ge 100 ]] && e=100
                         message -u -c -t "Cloning $sdev to $ddev [ $(printf '%3d%%' $e) ]"
-                    done < <(rsync -vaSXxH --log-file $LOG_PATH/bcrm.${sdev//\//_}_${ddev//\//_}.log $cmd "$smpnt/" "$dmpnt" | pv --interval 0.5 --numeric -le -s "$size" 2>&1 >/dev/null)
+                    done < <(eval rsync -vaSXxH --log-file $LOG_PATH/bcrm.${sdev//\//_}_${ddev//\//_}.log $cmd "$smpnt/" "$dmpnt" | pv --interval 0.5 --numeric -le -s "$size" 2>&1 >/dev/null)
                     message -u -c -t "Cloning $sdev to $ddev [ $(printf '%3d%%' 100) ]"
                 else
                     message -c -t "Cloning $sdev to $ddev"
-                    rsync -aSXxH $cmd "$smpnt/" "$dmpnt"
+                    eval rsync -aSXxH $cmd "$smpnt/" "$dmpnt"
                 fi
             };_ #}}}
             message -y
@@ -2244,7 +2347,7 @@ Clone() { #{{{
         )
 
         local s smpnt dmpnt sdev sfs spid sptype stype sused ssize ddev dfs dpid dptype dtype davail
-        for s in ${SRCS_ORDER[@]}; do
+        for s in "${SRCS_ORDER[@]}"; do
             IFS=: read -r sdev sfs spid sptype stype mountpoint sused ssize <<<${SRCS[$s]}
             IFS=: read -r ddev dfs dpid dptype dtype davail <<<${DESTS[${SRC2DEST[$s]}]}
 
@@ -2268,7 +2371,21 @@ Clone() { #{{{
 
             ((davail - sused <= 0)) && exit_ 10 "Require $(to_readable_size ${sused}K) but $ddev is only $(to_readable_size ${davail}K)"
 
+            if gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
+                mount_exta_lvm -d $dmpnt -s $smpnt
+            fi
+
             _copy "$sdev" "$ddev" "$smpnt" "$dmpnt"
+
+            _(){ #{{{
+				local l
+				for l in "${!TO_LVM[@]}"; do
+					IFS=: read -r name size fs <<<"${TO_LVM[$l]}"
+					if [[ -n ${arr[$name]} ]]; then
+						printf "${arr[$name]}\t$l\t$fs\terrors=remount-ro\t0\t1\n" >> "$dmpnt/etc/fstab"
+					fi
+				done
+            };_ #}}}
 
             _(){ #{{{
                 local em
@@ -2296,7 +2413,7 @@ Clone() { #{{{
             };_ #}}}
 
             _finish "$dmpnt"
-            umount_ "$ddev"
+            umount_ -R "$ddev" #-R in case TO_LVM has folders!
             umount_ "$tdev"
             [[ $stype == lvm ]] && lvremove -f "${VG_SRC_NAME}/$SNAP4CLONE"
 
@@ -2603,6 +2720,7 @@ Main() { #{{{
     exec 3>&1 4>&2
     tput sc
 
+    #TODO check if still needed
     { >&3; } 2<> /dev/null || exit_ 9
     { >&4; } 2<> /dev/null || exit_ 9
 
@@ -2670,9 +2788,12 @@ Main() { #{{{
     while (( $# )); do
         ! [[ $1 =~ ^- ]] && exit_ 1 "Invalid argument $1"
         [[ $1 == -- ]] && break
-        if [[ $1 =~ ^- && $2 =~ ^- ]]; then
+        if [[ $1 =~ ^- && ($2 =~ ^- || -z $2 ) ]]; then
             PARAMS["$1"]=true
             shift
+        elif [[ -n ${PARAMS[$1]} ]]; then
+            PARAMS["$1"]="${PARAMS[$1]}|${2// }"
+            shift 2
         else
             PARAMS["$1"]="${2// }"
             shift 2
@@ -2844,18 +2965,29 @@ Main() { #{{{
                 }
                 ;;
             '--to-lvm')
-                {
-                    local k v
-                    read -r k v <<<"${PARAMS[$k]/:/ }"
-                    [[ -z $v ]] && exit_ 1 "Missing LV name"
-                    if _is_valid_lv_name $v; then
-                        [[ -n ${TO_LVM[$k]} ]] && exit_ 1 "$k already specified. Duplicate parameters?"
-                        TO_LVM[$k]=$v
-                    else
-                        exit_ 1 "Invalid LV name '$v'."
-                    fi
+                _(){
+                    local params=()
+                    readarray -t -d '|' params <<<"${PARAMS[$k]}"
+
+                    local p
+                    for p in "${params[@]}"; do
+						local src_path lv_name size
+                        read -r src_path lv_name size <<<"${p//:/ }"
+                        [[ -z $lv_name ]] && exit_ 1 "Missing LV name"
+                        if _is_valid_lv_name $lv_name; then
+                            if [[ -d $src_path ]]; then
+                                [[ -z $size ]] && exit_ 1 "Missing size declaration."
+                                fs=$(df --output=fstype $src_path | tail -1)
+                            fi
+                            [[ -n ${TO_LVM[$src_path]} ]] && exit_ 1 "$k already specified. Duplicate parameters?"
+                            TO_LVM[$src_path]=${lv_name}:${size}:${fs}
+                            TO_LVM[$src_path]=${TO_LVM[$src_path]%:} #Remove trailing ':'
+                        else
+                            exit_ 1 "Invalid LV name '$lv_name'."
+                        fi
+                    done
                     PKGS+=(lvm)
-                }
+                };_
                 ;;
             '--')
                 break
@@ -3023,7 +3155,7 @@ Main() { #{{{
         #If empty, nothing happens!
         local l
         for l in ${!TO_LVM[@]}; do
-            _is_partition $l || exit_ 1 "$l is not a valid source partition for LV conversion!"
+            [[ -d $l ]] || _is_partition "$l" || exit_ 1 "$l is not a valid source partition or folder for LV conversion!"
         done
     };_ #}}}
 
@@ -3204,4 +3336,5 @@ Main() { #{{{
     message -i -t "Backup finished at $(date)"
 } #}}}
 
-bash -n $(readlink -f $0) && Main "$@" #self check and run
+#self check and run
+bash -n $(readlink -f $0) && Main "$@"
