@@ -466,7 +466,7 @@ exit_(){ #{{{
 mount_exta_lvm() { #{{{
     local OPTIND
     local option
-    while getopts ':s:d:c' option; do
+    while getopts ':s:d:cu' option; do
         case "$option" in
         s)
 			local smpnt="$OPTARG"
@@ -476,6 +476,9 @@ mount_exta_lvm() { #{{{
             ;;
         c)
             local create="true"
+            ;;
+        u)
+            local update_fstab="true"
             ;;
         :)
             exit_ 5 "Method call error: \t${FUNCNAME[0]}()\tMissing argument for $OPTARG"
@@ -490,10 +493,13 @@ mount_exta_lvm() { #{{{
 
     local -A arr
     while read -r k v; do arr[$k]=$v; done <<<$(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
+
     local l name
     for l in "${!TO_LVM[@]}"; do
         IFS=: read -r name size fs <<<"${TO_LVM[$l]}"
-        if [[ -n ${arr[$name]} ]]; then
+        if [[ $update_fstab == true && -s "$dmpnt/etc/fstab" ]]; then
+            printf "${arr[$name]}\t$l\t$fs\terrors=remount-ro\t0\t1\n" >> "$dmpnt/etc/fstab"
+        elif [[ -n ${arr[$name]} ]]; then
             [[ -n $smpnt ]] && rsync -av -f"+ $l" -f"- *" $smpnt/$l $dmpnt
 			[[ $create == true ]] && mkdir -p $dmpnt/$l
 			mount_ ${arr[$name]} -p $dmpnt/$l
@@ -575,7 +581,7 @@ umount_() { #{{{
 
     if [[ $# -eq 0 ]]; then
         local m
-        for m in "${MNTJRNL[@]}"; do $cmd -l "$m"; done
+        for m in "${MNTJRNL[@]}"; do $cmd "$m"; done
         return 0
     fi
 
@@ -2261,6 +2267,8 @@ Clone() { #{{{
                     fi
                 };_ #}}}
 
+                mount_exta_lvm -d $mpnt -u
+
                 # Tar will change parent folder permissions because all contend was saved with '.'.
                 # So we either restore the original values or the ones provided by argument overwrites.
                 if [[ -n $dir ]]; then
@@ -2377,15 +2385,7 @@ Clone() { #{{{
 
             _copy "$sdev" "$ddev" "$smpnt" "$dmpnt"
 
-            _(){ #{{{
-				local l
-				for l in "${!TO_LVM[@]}"; do
-					IFS=: read -r name size fs <<<"${TO_LVM[$l]}"
-					if [[ -n ${arr[$name]} ]]; then
-						printf "${arr[$name]}\t$l\t$fs\terrors=remount-ro\t0\t1\n" >> "$dmpnt/etc/fstab"
-					fi
-				done
-            };_ #}}}
+            mount_exta_lvm -d $dmpnt -u
 
             _(){ #{{{
                 local em
@@ -2706,9 +2706,9 @@ Main() { #{{{
                     swap_size=$(to_kbyte ${swap_size:-0})
                 fi
 
-                [[ -z ${mountpoint// } && $fs != swap ]] && { mount_ $dev || exit_ 1 "Could not mount ${dev}."; }
+                [[ -z ${mountpoint// } && $fs != swap ]] && { mount_ "$dev" || exit_ 1 "Could not mount ${dev}."; }
                 __src_size=$((swap_size + __src_size + $(df -k --output=used "$dev" | tail -n -1)))
-                [[ -z ${mountpoint// } ]] && umount_ "$dev"
+                [[ -z ${mountpoint// } && $fs != swap ]] && { umount_ "$dev" || exit_ 1 "Could not unmount ${dev}."; }
             fi
         done <<<"$plist"
 
