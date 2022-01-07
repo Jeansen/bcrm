@@ -1385,7 +1385,7 @@ grub_setup() { #{{{
             fi
         done
 
-        mount_exta_lvm -d $mp
+        (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $mp
     };_ #}}}
 
     _(){ #{{{
@@ -2238,7 +2238,7 @@ Clone() { #{{{
                     o_group=$(stat -c "%g" "$mpnt")
                 fi
 
-				[[ $mnt == / ]] && mount_exta_lvm -d $mpnt -c
+				[[ $mnt == / ]] && (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $mpnt -c
                 pushd "$mpnt" >/dev/null || return 1
 
                 ((davail - sused <= 0)) \
@@ -2267,7 +2267,7 @@ Clone() { #{{{
                     fi
                 };_ #}}}
 
-                mount_exta_lvm -d $mpnt -u
+                (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $mpnt -u
 
                 # Tar will change parent folder permissions because all contend was saved with '.'.
                 # So we either restore the original values or the ones provided by argument overwrites.
@@ -2380,12 +2380,12 @@ Clone() { #{{{
             ((davail - sused <= 0)) && exit_ 10 "Require $(to_readable_size ${sused}K) but $ddev is only $(to_readable_size ${davail}K)"
 
             if gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
-                mount_exta_lvm -d $dmpnt -s $smpnt
+                (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $dmpnt -s $smpnt
             fi
 
             _copy "$sdev" "$ddev" "$smpnt" "$dmpnt"
 
-            mount_exta_lvm -d $dmpnt -u
+            (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $dmpnt -u
 
             _(){ #{{{
                 local em
