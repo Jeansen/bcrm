@@ -499,7 +499,7 @@ mount_exta_lvm() { #{{{
         IFS=: read -r name size fs <<<"${TO_LVM[$l]}"
         if [[ $update_fstab == true && -s "$dmpnt/etc/fstab" ]]; then
             printf "${arr[$name]}\t$l\t$fs\terrors=remount-ro\t0\t1\n" >> "$dmpnt/etc/fstab"
-        elif [[ -n ${arr[$name]} ]]; then
+        elif [[ -n ${arr[$name]} && -n $fs ]]; then
             [[ -n $smpnt ]] && rsync -av -f"+ $l" -f"- *" $smpnt/$l $dmpnt
 			[[ $create == true ]] && mkdir -p $dmpnt/$l
 			mount_ ${arr[$name]} -p $dmpnt/$l
@@ -756,9 +756,9 @@ set_dest_uuids() { #{{{
     logmsg "set_dest_uuids"
     (( ${#DESTS_ORDER} == 0 )) && DESTS_ORDER=($(lsblk -lno uuid "$DEST" | xargs))
 
-    if [[ -b $DEST ]]; then
-        [[ $IS_LVM == true ]] && vgchange -an "$VG_SRC_NAME_CLONE"
-        [[ $IS_LVM == true ]] && vgchange -ay "$VG_SRC_NAME_CLONE"
+    if [[ -b $DEST && $IS_LVM == true ]]; then
+        vgchange -an "$VG_SRC_NAME_CLONE"
+        vgchange -ay "$VG_SRC_NAME_CLONE"
     fi
 
     local lvs_list=$(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
@@ -771,9 +771,11 @@ set_dest_uuids() { #{{{
             read -r lv_name dm_path <<<"$line"
             if [[ $path == "$dm_path" ]]; then
 				local l name _
-                for l in "${TO_LVM[@]}"; do
-                    IFS=: read -r name _ <<<"$l"
-                    [[ $name == "$lv_name" ]] && return 0
+                for l in "${!TO_LVM[@]}"; do
+                    if [[ -d $l ]]; then
+                        IFS=: read -r name _ <<<"${TO_LVM[$l]}"
+                        [[ $name == "$lv_name" ]] && return 0
+                    fi
                 done
             fi
         done < <(echo "$lvs_list")
@@ -2380,7 +2382,7 @@ Clone() { #{{{
             ((davail - sused <= 0)) && exit_ 10 "Require $(to_readable_size ${sused}K) but $ddev is only $(to_readable_size ${davail}K)"
 
             if gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
-                (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $dmpnt -s $smpnt
+                (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt 
             fi
 
             _copy "$sdev" "$ddev" "$smpnt" "$dmpnt"
@@ -2435,7 +2437,7 @@ Clone() { #{{{
             SRC2DEST[${SRCS_ORDER[$i]}]=${DESTS_ORDER[$i]}
             [[ -n ${spid// } && -n ${dpid// } ]] && PSRC2PDEST[$spid]=$dpid
             [[ -n ${sdev// } && -n ${ddev// } ]] && NSRC2NDEST[$sdev]=$ddev
-            [[ -n ${spid// } && -z ${dpid// } ]] && PSRC2PDEST[$spid]=$ddev
+            [[ -n ${spid// } && -n ${dpid// } ]] && PSRC2PDEST[$spid]=$ddev
         done
     } #}}}
 
