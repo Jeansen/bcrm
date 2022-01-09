@@ -786,7 +786,7 @@ set_dest_uuids() { #{{{
         read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
         eval local "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
-        _is_lvm_candidate $NAME && { update_dest_order "$UUID"; continue; }
+        (( ${#TO_LVM[@]} > 0 )) &&_is_lvm_candidate $NAME && { update_dest_order "$UUID"; continue; }
 
         #Filter all we don't want
         { [[ $FSTYPE == swap ]] ||
@@ -2143,7 +2143,7 @@ Clone() { #{{{
 			local l
             for l in "${!TO_LVM[@]}"; do
                 IFS=: read -r lv_name size fs <<<"${TO_LVM[$l]}"
-                src_lfs[$lv_name]=$fs
+                [[ -n $fs ]] && src_lfs[$lv_name]=$fs
             done
         };_ #}}}
 
@@ -2435,7 +2435,7 @@ Clone() { #{{{
             SRC2DEST[${SRCS_ORDER[$i]}]=${DESTS_ORDER[$i]}
             [[ -n ${spid// } && -n ${dpid// } ]] && PSRC2PDEST[$spid]=$dpid
             [[ -n ${sdev// } && -n ${ddev// } ]] && NSRC2NDEST[$sdev]=$ddev
-            [[ -n $spid && -z ${dpid// } ]] && PSRC2PDEST[$spid]=$ddev
+            [[ -n ${spid// } && -z ${dpid// } ]] && PSRC2PDEST[$spid]=$ddev
         done
     } #}}}
 
