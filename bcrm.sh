@@ -497,7 +497,7 @@ mount_exta_lvm() { #{{{
     local l name
     for l in "${!TO_LVM[@]}"; do
         IFS=: read -r name size fs <<<"${TO_LVM[$l]}"
-        if [[ $update_fstab == true && -s "$dmpnt/etc/fstab" && -d $l ]]; then
+        if [[ $update_fstab == true && -s "$dmpnt/etc/fstab" && ! -b $l ]]; then
             printf "${arr[$name]}\t$l\t$fs\terrors=remount-ro\t0\t1\n" >> "$dmpnt/etc/fstab"
         elif [[ -n ${arr[$name]} && -n $fs ]]; then
             [[ -n $smpnt ]] && rsync -av -f"+ $l" -f"- *" $smpnt/$l $dmpnt
@@ -772,7 +772,7 @@ set_dest_uuids() { #{{{
             if [[ $path == "$dm_path" ]]; then
 				local l name _
                 for l in "${!TO_LVM[@]}"; do
-                    if [[ -d $l ]]; then
+                    if [[ ! -b $l ]]; then
                         IFS=: read -r name _ <<<"${TO_LVM[$l]}"
                         [[ $name == "$lv_name" ]] && return 0
                     fi
