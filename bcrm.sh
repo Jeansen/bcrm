@@ -66,6 +66,7 @@ declare -r ID_DOS_LINUX=83
 declare -r ID_DOS_FAT32=c
 declare -r ID_DOS_EXT=5
 declare _RMODE=false
+declare MODE="" #clone,backup,restore
 #}}}
 
 # PREDEFINED COMMAND SEQUENCES ----------------------------------------------------------------------------------------{{{
@@ -773,7 +774,7 @@ set_dest_uuids() { #{{{
             if [[ $path == "$dm_path" ]]; then
 				local l name _
                 for l in "${!TO_LVM[@]}"; do
-                    if [[ ! -b $l ]]; then
+                    if [[ ! (-b $l || $l =~ ^/dev) ]]; then
                         IFS=: read -r name _ <<<"${TO_LVM[$l]}"
                         [[ $name == "$lv_name" ]] && return 0
                     fi
@@ -789,7 +790,7 @@ set_dest_uuids() { #{{{
         read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
         eval local "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
-        (( ${#TO_LVM[@]} > 0 )) &&_is_lvm_candidate $NAME && { update_dest_order "$UUID"; continue; }
+        (( ${#TO_LVM[@]} > 0 )) && _is_lvm_candidate $NAME && { update_dest_order "$UUID"; continue; }
 
         #Filter all we don't want
         { [[ $FSTYPE == swap ]] ||
@@ -1655,6 +1656,37 @@ sector_to_tbyte() { #{{{
     echo $((v / (2 * 2 ** 30)))
 } #}}}
 #}}}
+
+filter_params_x() {
+    if [[ -d ${PARAMS[-d]} || -d ${PARAMS[-destination]} ]]; then
+        MODE=backup
+    elif [[ -d ${PARAMS[-s]} || -d ${PARAMS[-source]} ]]; then
+        MODE=restore
+    else
+        MODE=clone
+    fi
+
+    case $MODE in
+        'backup')
+            for p in ${!PARAMS[@]}; do
+                case $p in
+                -c|--check|-s|--source|-d|--destination|--source-image)
+                    continue
+                    ;;
+                *)
+                    unset PARAMS[$p]
+                    ;;
+                esac
+            done
+            ;;
+        # 'restore')
+        #     exit_ 1 "Not yet implemented"
+        #     ;;
+        # 'clone')
+        #     exit_ 1 "Not yet implemented"
+        #     ;;
+    esac
+}
 
 #}}}
 
@@ -3036,6 +3068,7 @@ Main() { #{{{
                 ;;
             esac
         done
+        filter_params_x
     };_ #}}}
 
     hash pv &>/dev/null && INTERACTIVE=true || message -i -t "No progress will be shown. Consider installing package: pv"
@@ -3083,7 +3116,7 @@ Main() { #{{{
         eval "$abort"
     };_ #}}}
 
-    [[ -b "$SRC" && -d $DEST && -n "$(ls "$DEST")" ]] && exit_ 1 "Destination not empty!"
+    [[ (-b "$SRC" || -f $SRC_IMG) && -d $DEST && -n "$(ls $DEST)" ]] && exit_ 1 "Destination not empty!"
 
     if [[ $SCHROOT == true ]]; then
         _run_schroot
