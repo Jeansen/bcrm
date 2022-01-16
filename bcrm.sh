@@ -104,7 +104,6 @@ declare DEST=""
 declare VG_SRC_NAME_CLONE=""
 declare ENCRYPT_PWD=""
 declare HOST_NAME=""
-declare LVM_EXPAND="" #Name of the LV to expand.
 declare EFI_BOOT_IMAGE=""
 
 declare UEFI=false
@@ -122,7 +121,8 @@ declare YES=false
 declare MIN_RESIZE=2048 #In 1M units
 declare SWAP_SIZE=-1    #Values < 0 mean no change/ignore
 declare BOOT_SIZE=-1
-declare LVM_EXPAND_BY=0 #How much % of free space to use from a VG, e.g. when a dest disk is larger than a src disk.
+declare -A LVM_EXPAND_BY #How much % of free space to use from a VG, e.g. when a dest disk is larger than a src disk.
+declare -A LVM_SIZE_TO 
 #}}}
 
 # CHECKS FILLED BY MAIN -----------------------------------------------------------------------------------------------{{{
@@ -199,6 +199,7 @@ usage() { #{{{
     printf "  %-3s %-30s %s\n"   "   " "--lvm-expand"            "LVM only: Have the given LV use the remaining free space."
     printf "  %-3s %-30s %s\n"   "   " ""                        "An optional percentage can be supplied, e.g. 'root:80'"
     printf "  %-3s %-30s %s\n"   "   " ""                        "Which would add 80% of the remaining free space in a VG to this LV"
+    printf "  %-3s %-30s %s\n"   "   " "--lvm-set-size"          "LVM only: Set size of given LV, e.g. 'root:80G'."
     printf "  %-3s %-30s %s\n"   "-u," "--make-uefi"             "Convert to UEFI"
     printf "  %-3s %-30s %s\n"   "-w," "--swap-size"             "Swap partition size. May be zero to remove any swap partition."
     printf "  %-3s %-30s %s\n"   "-m," "--resize-threshold"      "Do not resize partitions smaller than <size> (default 2048M)"
@@ -772,8 +773,8 @@ set_dest_uuids() { #{{{
             if [[ $path == "$dm_path" ]]; then
 				local l name _
                 for l in "${!TO_LVM[@]}"; do
-                    if [[ ! -b $path ]]; then
-                        IFS=: read -r name _ <<<"${TO_LVM[$path]}"
+                    if [[ ! -b $l ]]; then
+                        IFS=: read -r name _ <<<"${TO_LVM[$l]}"
                         [[ $name == "$lv_name" ]] && return 0
                     fi
                 done
@@ -1313,44 +1314,42 @@ boot_setup() { #{{{
 
     local k d uuid fstype
     for k in ${!sd[@]}; do
-        for d in "${DESTS[@]}"; do
-            sed -i "s|$k|${sd[$k]}|" \
-                "$dmnt/${path[0]}" "$dmnt/${path[1]}" \
-                "$dmnt/${path[2]}" "$dmnt/${path[3]}" \
-                2>/dev/null
+        sed -i "s|$k|${sd[$k]}|" \
+            "$dmnt/${path[0]}" "$dmnt/${path[1]}" \
+            "$dmnt/${path[2]}" "$dmnt/${path[3]}" \
+            2>/dev/null
 
-            sed -i "s|\(PART\)*UUID=/[^ ]*|${sd[$k]}|" \
-                "$dmnt/${path[0]}" "$dmnt/${path[1]}" \
-                "$dmnt/${path[2]}" "$dmnt/${path[3]}" \
-                2>/dev/null
+        sed -i "s|\(PART\)*UUID=/[^ ]*|${sd[$k]}|" \
+            "$dmnt/${path[0]}" "$dmnt/${path[1]}" \
+            "$dmnt/${path[2]}" "$dmnt/${path[3]}" \
+            2>/dev/null
 
-            #Resume file might be wrong, so we just set it explicitely
-            if [[ -e $dmnt/${path[4]} ]]; then
-                local name uuid fstype
-                read -r name uuid fstype type <<<$(lsblk -lnpo name,uuid,fstype,type "$DEST" | grep 'swap')
+        #Resume file might be wrong, so we just set it explicitely
+        if [[ -e $dmnt/${path[4]} ]]; then
+            local name uuid fstype
+            read -r name uuid fstype type <<<$(lsblk -lnpo name,uuid,fstype,type "$DEST" | grep 'swap')
 
-                local rplc
-                if [[ -z $name ]]; then
-                    rplc="RESUME="
-                elif [[ $type == lvm ]]; then
-                    #For some reson UUID with LVM does not work, though update-initramfs will not complain.
-                    rplc="RESUME=$name"
-                else
-                    rplc="RESUME=UUID=$uuid"
-                fi
-                sed -i -E "/RESUME=none/!s|^RESUME=.*|$rplc|i" "$dmnt/${path[4]}" #We don't overwrite none
+            local rplc
+            if [[ -z $name ]]; then
+                rplc="RESUME="
+            elif [[ $type == lvm ]]; then
+                #For some reson UUID with LVM does not work, though update-initramfs will not complain.
+                rplc="RESUME=$name"
+            else
+                rplc="RESUME=UUID=$uuid"
             fi
+            sed -i -E "/RESUME=none/!s|^RESUME=.*|$rplc|i" "$dmnt/${path[4]}" #We don't overwrite none
+        fi
 
-            if [[ -e $dmnt/${path[1]} ]]; then
-                #Make sure swap is set correctly.
-                if [[ $SWAP_SIZE -eq 0 ]]; then
-                    sed -i '/swap/d' "$dmnt/${path[1]}"
-                else
-                    read -r fstype uuid <<<$(lsblk -lnpo fstype,uuid "$DEST" ${PVS[@]} | grep '^swap')
-                    sed -i -E "/^[^#].*\bswap/ s/[^ ]*/UUID=$uuid/" "$dmnt/${path[1]}"
-                fi
+        if [[ -e $dmnt/${path[1]} ]]; then
+            #Make sure swap is set correctly.
+            if [[ $SWAP_SIZE -eq 0 ]]; then
+                sed -i '/swap/d' "$dmnt/${path[1]}"
+            else
+                read -r fstype uuid <<<$(lsblk -lnpo fstype,uuid "$DEST" ${PVS[@]} | grep '^swap')
+                sed -i -E "/^[^#].*\bswap/ s/[^ ]*/UUID=$uuid/" "$dmnt/${path[1]}"
             fi
-        done
+        fi
     done
 } #}}}
 
@@ -1983,6 +1982,7 @@ Clone() { #{{{
 
         local -i fixd_size_dest=0
         local -i fixd_size_src=0
+        local created=()
 
         _create_fixed() { #{{{ TODO works, but should be factored out to avoid multiple nesting!
             local part="$1"
@@ -2002,6 +2002,7 @@ Clone() { #{{{
                         fixd_size_src+=$part_size_src
                         fixd_size_dest+=$part_size_dest
                         lvcreate --yes -L$part_size_dest -n "$name" "$VG_SRC_NAME_CLONE"
+                        created+=($name)
                     fi
                 fi
             done
@@ -2020,6 +2021,7 @@ Clone() { #{{{
                     fixd_size_src+=$part_size_src
                     fixd_size_dest+=$part_size_dest
                     lvcreate --yes -L$part_size_dest -n $lv_name "$VG_SRC_NAME_CLONE"
+                    created+=($name)
                 fi
             fi
         } #}}}
@@ -2087,29 +2089,39 @@ Clone() { #{{{
 
         scale_factor=$(echo "scale=4; $s2 / $s1" | bc)
 
+        local -A expands
+
         #TODO rework this and the next block. Currently there are two stage, LVM and ALL_TO_LVM using SRC
         #SWAP is excluded from LVM conversion, too
         _(){ #{{{
             local lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path e size
             while read -r e; do
                 read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"$e"
+                lv_size=${lv_size%%.*}
+                declare -p created
                 if [[ $vg_name == "$VG_SRC_NAME" && -n $VG_SRC_NAME ]]; then
+                    for c in ${created[@]}; do
+                        [[ $c == $lv_name ]] && continue 2
+                    done
+
                     [[ $lv_dm_path == "$SWAP_PART" ]] && continue
-                    [[ -n $LVM_EXPAND && $lv_name == "$LVM_EXPAND" ]] && continue
+                    (( ${LVM_EXPAND_BY[$lv_name]:-0} >0 )) && expands[$lv_name]="$lv_size" && continue
                     [[ $lv_role =~ snapshot ]] && continue
 
-                    if ((s1 < s2)); then
-                        lvcreate --yes -L"${lv_size%%.*}" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
+                    if (( ${LVM_SIZE_TO[$lv_name]:-0} >0 )); then 
+                        lvcreate --yes -L"${LVM_SIZE_TO[$lv_name]}" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed1."
+                    elif ((s1 < s2)); then
+                        lvcreate --yes -L"$lv_size" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed2."
                     else
-                        size=$(echo "scale=4; $lv_size * $scale_factor" | bc)
-                        lvcreate --yes -L${size%%.*} -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
+                        size=$(echo "scale=0; $lv_size * $scale_factor / 1" | bc)
+                        lvcreate --yes -L$size -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed3."
                     fi
                 fi
             done < <(echo "$lvm_data")
         };_ #}}}
 
         _(){ #{{{
-            local sname fs spid ptype type mp used size f lsize lv_size
+            local f sname fs spid ptype type mp used size lsize
             for f in "${!SRCS[@]}"; do
                 IFS=: read -r sname fs spid ptype type mp used size <<<"${SRCS[$f]}"
 
@@ -2118,9 +2130,9 @@ Clone() { #{{{
                     | gawk '{print $2}'
                 )
 
-                lv_size=${lv_size%%.*}
                 vg_free=$(( ${vg_free%%.*} - $VG_FREE_SIZE ))
 
+                local lv_size
                 if [[ -n ${TO_LVM[$sname]} && $sname != "$BOOT_PART" ]] ; then
                     lv_size=$(to_mbyte ${size}K) #TODO to_mbyte should be able to deal with floats
                     ((s1 > s2)) && lv_size=$(echo "scale=0; $lv_size * $scale_factor / 1" | bc)
@@ -2130,12 +2142,28 @@ Clone() { #{{{
             done
         };_ #}}}
 
-        [[ -n $LVM_EXPAND ]] && lvcreate --yes -l"${LVM_EXPAND_BY:-100}%FREE" -n "$LVM_EXPAND" "$VG_SRC_NAME_CLONE"
+        local -i free=$(declare f=$(vgs --noheadings --nosuffix --units m -o vg_free $VG_SRC_NAME_CLONE); echo ${f%%.*})
+        _(){ #{{{
+            local e
+            for e in ${!expands[@]}; do
+                free=$((free - expands[$e]))
+            done
+        };_ #}}}
 
         _(){ #{{{
-            local name fs pid ptype type mp used size
+            local size e
+            for e in ${!expands[@]}; do
+                if (( LVM_EXPAND_BY[$e] >0 )); then
+                    size=$(echo "scale=0; ${expands[$e]} + ($free * ${LVM_EXPAND_BY[$e]} / 100)" | bc)
+                    lvcreate --yes -L"$size" -n "$e" "$VG_SRC_NAME_CLONE"
+                elif (( LVM_SIZE_TO[$e] >0 )) ; then
+                    lvcreate --yes -L${LVM_SIZE_TO[$e]} -n "$e" "$VG_SRC_NAME_CLONE"
+                fi
+            done
+        };_ #}}}
 
-			local s
+        _(){ #{{{
+            local s name fs pid ptype type mp used size
             for s in "${!SRCS[@]}"; do
                 IFS=: read -r name fs pid ptype type mp used size <<<"${SRCS[$s]}"
                 [[ $type == 'lvm' ]] && src_lfs[${name##*-}]=$fs
@@ -2150,7 +2178,7 @@ Clone() { #{{{
         };_ #}}}
 
         _(){ #{{{
-            local lv_name dm_path type e
+            local e lv_name dm_path type
             while read -r e; do
                 read -r lv_name dm_path type <<<"$e"
                 [[ $dm_path =~ swap ]] && mkswap -f "$dm_path" && continue
@@ -2741,6 +2769,7 @@ Main() { #{{{
             source-image:,
             split,
             lvm-expand:,
+            lvm-set-size:,
             swap-size:,
             vg-free-size:,
             use-all-pvs,
@@ -2897,8 +2926,16 @@ Main() { #{{{
                     Use K, M, G or T suffixes to specify kilobytes, megabytes, gigabytes and terabytes."
                 ;;
             '--lvm-expand')
-                read -r LVM_EXPAND LVM_EXPAND_BY <<<"${PARAMS[$k]/:/ }"
-                [[ "${LVM_EXPAND_BY:-100}" =~ ^0*[1-9]$|^0*[1-9][0-9]$|^100$ ]] || exit_ 2 "Invalid size attribute in $k ${PARAMS[$k]}"
+                local name size
+                read -r name size <<<"${PARAMS[$k]/:/ }"
+                [[ "${size:-100}" =~ ^0*[1-9]$|^0*[1-9][0-9]$|^100$ ]] || exit_ 2 "Invalid size attribute in $k ${PARAMS[$k]}"
+                LVM_EXPAND_BY[$name]=$size
+                ;;
+            '--lvm-set-size')
+                local name size
+                read -r name size <<<"${PARAMS[$k]/:/ }"
+                validate_size $size || exit_ 2 "Invalid size specified."
+                LVM_SIZE_TO[$name]=$(to_mbyte $size)
                 ;;
             '--vg-free-size')
                 { validate_size "${PARAMS[$k]}" && VG_FREE_SIZE=$(to_mbyte "${PARAMS[$k]}"); } || exit_ 2 "Invalid size specified.
@@ -3274,10 +3311,11 @@ Main() { #{{{
                 grep -qE "\b${TO_LVM[$l]}\b" < <(echo "$lvs") && exit_ 1 "LV name '${TO_LVM[$l]}' already exists. Cannot convert "
             done
 
-            if [[ -n $LVM_EXPAND ]]; then
-                ! _is_valid_lv "$LVM_EXPAND" "$VG_SRC_NAME" \
-                && exit_ 2 "Volumen name ${LVM_EXPAND} does not exists in ${VG_SRC_NAME}!"
-            fi
+            local f
+            for f in ${!LVM_EXPAND_BY[@]} ${!LVM_SIZE_TO[@]}; do
+                ! _is_valid_lv "$f" "$VG_SRC_NAME" \
+                && exit_ 2 "Volumen name $f does not exists in ${VG_SRC_NAME}!"
+            done
 
             [[ -z $VG_SRC_NAME_CLONE ]] \
                 && VG_SRC_NAME_CLONE=${VG_SRC_NAME}_${CLONE_DATE}
