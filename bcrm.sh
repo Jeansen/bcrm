@@ -123,7 +123,7 @@ declare MIN_RESIZE=2048 #In 1M units
 declare SWAP_SIZE=-1    #Values < 0 mean no change/ignore
 declare BOOT_SIZE=-1
 declare -A LVM_EXPAND_BY #How much % of free space to use from a VG, e.g. when a dest disk is larger than a src disk.
-declare -A LVM_SIZE_TO 
+declare -A LVM_SIZE_TO
 #}}}
 
 # CHECKS FILLED BY MAIN -----------------------------------------------------------------------------------------------{{{
@@ -1450,6 +1450,8 @@ crypt_setup() { #{{{
                 mount_ "$ddev" -p "$mp/$m" || exit_ 1 "Failed to mount $ddev to ${mp/$m}."
             fi
         done
+
+        (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $mp
     };_ #}}}
 
     _(){ #{{{
@@ -1518,6 +1520,7 @@ crypt_setup() { #{{{
     sed -i -E "/GRUB_CMDLINE_LINUX_DEFAULT=/ s|resume=[^ \"]*|resume=$resume|" "$mp/etc/default/grub"
 
     pkg_remove "$mp" "$REMOVE_PKGS" || return 1
+    [[ ${#TO_LVM[@]} -gt 0 ]] && { pkg_install "$mp" "lvm2" || return 1; }
     grub_install "$mp" "$dest" "${apt_pkgs[*]}" || return 1
     [[ $UPDATE_EFI_BOOT == true ]] && update_efi_boot "$mp" "$EFI_BOOT_IMAGE"
 
@@ -1581,10 +1584,10 @@ to_readable_size() { #{{{
 # $1: <number+K|M|G|T>
 to_byte() { #{{{
     local p=$1
-    [[ $p =~ ^[0-9]+K ]] && echo $((${p%[a-zA-Z]} * 2 ** 10))
-    [[ $p =~ ^[0-9]+M ]] && echo $((${p%[a-zA-Z]} * 2 ** 20))
-    [[ $p =~ ^[0-9]+G ]] && echo $((${p%[a-zA-Z]} * 2 ** 30))
-    [[ $p =~ ^[0-9]+T ]] && echo $((${p%[a-zA-Z]} * 2 ** 40))
+    [[ $p =~ ^[0-9]+(k|K)$ ]] && echo $((${p%[a-zA-Z]} * 2 ** 10))
+    [[ $p =~ ^[0-9]+(m|M)$ ]] && echo $((${p%[a-zA-Z]} * 2 ** 20))
+    [[ $p =~ ^[0-9]+(g|G)$ ]] && echo $((${p%[a-zA-Z]} * 2 ** 30))
+    [[ $p =~ ^[0-9]+(t|T)$ ]] && echo $((${p%[a-zA-Z]} * 2 ** 40))
     { [[ $p =~ ^[0-9]+$ ]] && echo "$p"; } || return 1
 } #}}}
 
@@ -1618,7 +1621,7 @@ to_tbyte() { #{{{
 
 # $1: <bytes> | <number>[K|M|G|T]
 validate_size() { #{{{
-    [[ $1 =~ ^[0-9]+(K|M|G|T) ]] && return 0 || return 1
+    [[ $1 =~ ^[0-9]+(K|k|M|m|G|g|T|t) ]] && return 0 || return 1
 } #}}}
 
 # $1: <bytes> | <number>[K|M|G|T]
@@ -1668,9 +1671,9 @@ filter_params_x() {
 
     case $MODE in
         'backup')
-            for p in ${!PARAMS[@]}; do
+            for p in "${!PARAMS[@]}"; do
                 case $p in
-                -c|--check|-s|--source|-d|--destination|--source-image)
+                    -c|--check|-s|--source|-d|--destination|--source-image|--no-cleanup|--quiet|--version|--split|--compress)
                     continue
                     ;;
                 *)
@@ -1679,12 +1682,24 @@ filter_params_x() {
                 esac
             done
             ;;
-        # 'restore')
-        #     exit_ 1 "Not yet implemented"
-        #     ;;
-        # 'clone')
-        #     exit_ 1 "Not yet implemented"
-        #     ;;
+        'restore')
+            for p in "${!PARAMS[@]}"; do
+                case $p in
+                --compress|--include-partition)
+                    unset PARAMS[$p]
+                    ;;
+                esac
+            done
+            ;;
+        'clone')
+            for p in "${!PARAMS[@]}"; do
+                case $p in
+                -c|--check|--compress|--split|--no-cleanup|--quiet|--version|--yes)
+                    unset PARAMS[$p]
+                    ;;
+                esac
+            done
+            ;;
     esac
 }
 
@@ -1700,7 +1715,7 @@ Cleanup() { #{{{
             [[ $SCHROOT_HOME =~ ^/tmp/ ]] && rm -rf "$SCHROOT_HOME" #TODO add option to overwrite and show warning
             rm "$F_SCHROOT_CONFIG"
             [[ $VG_SRC_NAME_CLONE && -b $DEST ]] && vgchange -an "$VG_SRC_NAME_CLONE"
-            [[ $ENCRYPT_PWD ]] && cryptsetup close "/dev/mapper/$LUKS_LVM_NAME"
+            [[ -n $ENCRYPT_PWD ]] && cryptsetup close "/dev/mapper/$LUKS_LVM_NAME"
 
             [[ -n $DEST_IMG ]] && qemu-nbd -d $DEST_NBD
             if [[ -n $SRC_IMG ]]; then
@@ -2130,7 +2145,6 @@ Clone() { #{{{
             while read -r e; do
                 read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"$e"
                 lv_size=${lv_size%%.*}
-                declare -p created
                 if [[ $vg_name == "$VG_SRC_NAME" && -n $VG_SRC_NAME ]]; then
                     for c in ${created[@]}; do
                         [[ $c == $lv_name ]] && continue 2
@@ -2140,7 +2154,7 @@ Clone() { #{{{
                     (( ${LVM_EXPAND_BY[$lv_name]:-0} >0 )) && expands[$lv_name]="$lv_size" && continue
                     [[ $lv_role =~ snapshot ]] && continue
 
-                    if (( ${LVM_SIZE_TO[$lv_name]:-0} >0 )); then 
+                    if (( ${LVM_SIZE_TO[$lv_name]:-0} >0 )); then
                         lvcreate --yes -L"${LVM_SIZE_TO[$lv_name]}" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed1."
                     elif ((s1 < s2)); then
                         lvcreate --yes -L"$lv_size" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed2."
@@ -2245,7 +2259,7 @@ Clone() { #{{{
 
         sleep 3
 
-        if [[ $ENCRYPT_PWD ]]; then
+        if [[ -n $ENCRYPT_PWD ]]; then
             encrypt "$ENCRYPT_PWD" "$DEST" "$LUKS_LVM_NAME"
         else
             local ptable="$(if [[ $_RMODE == true ]]; then cat "$SRC/$F_PART_TABLE"; else sfdisk -d "$SRC"; fi)"
@@ -2442,7 +2456,7 @@ Clone() { #{{{
             ((davail - sused <= 0)) && exit_ 10 "Require $(to_readable_size ${sused}K) but $ddev is only $(to_readable_size ${davail}K)"
 
             if gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
-                (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt 
+                (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt
             fi
 
             _copy "$sdev" "$ddev" "$smpnt" "$dmpnt"
@@ -2576,7 +2590,7 @@ Clone() { #{{{
             local ddev rest
             IFS=: read -r ddev rest <<<${DESTS[${SRC2DEST[${MOUNTS['/']}]}]}
             [[ -z $ddev ]] && exit_ 1 "Unexpected error - empty destination."
-            if [[ $ENCRYPT_PWD ]]; then
+            if [[ -n $ENCRYPT_PWD ]]; then
                 crypt_setup "$ENCRYPT_PWD" "$ddev" "$DEST" "$LUKS_LVM_NAME" "$ENCRYPT_PART" || return 1
             else
                 grub_setup "$ddev" "$HAS_EFI" "$UEFI" "$DEST" || { message -r -w && return 1; }
@@ -2786,7 +2800,8 @@ Main() { #{{{
     { >&3; } 2<> /dev/null || exit_ 9
     { >&4; } 2<> /dev/null || exit_ 9
 
-    local option=$(getopt \
+    #needs to be global or the $? check will fail!
+    option=$(getopt \
         -o 'b:cd:e:hH:m:n:pqs:uUvw:yz' \
         --long '
             help,
@@ -2828,6 +2843,7 @@ Main() { #{{{
     [[ $? -ne 0 ]] && usage
 
     eval set -- "$option"
+    unset option
 
     [[ $args_count -eq 0 || "$*" =~ -h|--help ]] && usage #Don't have to be root to get the usage info
 
@@ -2855,10 +2871,10 @@ Main() { #{{{
             PARAMS["$1"]=true
             shift
         elif [[ -n ${PARAMS[$1]} ]]; then
-            PARAMS["$1"]="${PARAMS[$1]}|${2// }"
+            PARAMS["$1"]="${PARAMS[$1]}|$2"
             shift 2
         else
-            PARAMS["$1"]="${2// }"
+            PARAMS["$1"]="$2"
             shift 2
         fi
     done
@@ -3044,6 +3060,7 @@ Main() { #{{{
                     for p in "${params[@]}"; do
 						local src_path lv_name size
                         read -r src_path lv_name size <<<"${p//:/ }"
+                        validate_size $size || exit_ 1 "Invalid size."
                         [[ -z $lv_name ]] && exit_ 1 "Missing LV name"
                         if _is_valid_lv_name $lv_name; then
                             if [[ -d $src_path ]]; then
@@ -3068,7 +3085,7 @@ Main() { #{{{
                 ;;
             esac
         done
-        filter_params_x
+        # filter_params_x
     };_ #}}}
 
     hash pv &>/dev/null && INTERACTIVE=true || message -i -t "No progress will be shown. Consider installing package: pv"
