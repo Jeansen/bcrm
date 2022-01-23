@@ -494,7 +494,7 @@ mount_exta_lvm() { #{{{
     shift $((OPTIND - 1))
 
     local -A arr
-    while read -r k v; do arr[$k]=$v; done <<<$(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
+    while read -r k v; do arr[$k]="$v"; done <<<$(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
 
     local l name
     for l in "${!TO_LVM[@]}"; do
@@ -502,9 +502,9 @@ mount_exta_lvm() { #{{{
         if [[ $update_fstab == true && -s "$dmpnt/etc/fstab" && ! $l =~ ^/dev ]]; then
             printf "${arr[$name]}\t$l\t$fs\terrors=remount-ro\t0\t1\n" >> "$dmpnt/etc/fstab"
         elif [[ -n ${arr[$name]} && -n $fs ]]; then
-            [[ -n $smpnt ]] && rsync -av -f"+ $l" -f"- *" $smpnt/$l $dmpnt
-			[[ $create == true ]] && mkdir -p $dmpnt/$l
-			mount_ ${arr[$name]} -p $dmpnt/$l
+            [[ -n $smpnt && -n $dmpnt ]] && rsync -av -f"+ $l" -f"- *" "$smpnt/$l" "$dmpnt"
+			[[ $create == true ]] && mkdir -p "$dmpnt/$l"
+			mount_ "${arr[$name]}" -p "$dmpnt/$l"
         fi
     done
 } #}}}
@@ -512,7 +512,7 @@ mount_exta_lvm() { #{{{
 find_mount_part() { #{{{
     local m
     for m in $(echo ${!MOUNTS[@]} | tr ' ' '\n' | sort -r | grep -E '^/' | grep -v -E '^/dev/'); do
-        [[ $1 =~ $m ]] && echo $m && return 0
+        [[ $1 =~ $m ]] && echo "$m" && return 0
     done
 } #}}}
 
@@ -756,7 +756,8 @@ mounts() { #{{{
 
 set_dest_uuids() { #{{{
     logmsg "set_dest_uuids"
-    (( ${#DESTS_ORDER} == 0 )) && DESTS_ORDER=($(lsblk -lno uuid "$DEST" | xargs))
+    
+    (( ${#DESTS_ORDER} == 0 )) && DESTS_ORDER=($(lsblk -lno uuid,name,type "$DEST" | grep -E 'part|lvm' | awk '{print $1}'))
 
     if [[ -b $DEST && $IS_LVM == true ]]; then
         vgchange -an "$VG_SRC_NAME_CLONE"
@@ -846,12 +847,12 @@ get_uuid() {
 init_srcs() { #{{{
     logmsg "init_srcs"
     local file="$1"
-    (( ${#SRCS_ORDER} == 0 )) && SRCS_ORDER=($(lsblk -lno uuid "$SRC" | xargs))
+    (( ${#SRCS_ORDER} == 0 )) && SRCS_ORDER=($(lsblk -lno uuid,name,type --sort name "$SRC" | grep -E 'part|lvm' | awk '{print $1}'))
 
     _(){ #{{{
-        local e
+        local e=''
         while read -r e; do
-            local name kdev fstype uuid puuid type parttype mountpoint size
+            local name='' kdev='' fstype='' uuid='' puuid='' type='' parttype='' mountpoint='' size=''
             read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
             eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
@@ -863,25 +864,34 @@ init_srcs() { #{{{
             [[ $NAME =~ real$|cow$ ]]; } && { [[ -n $UUID ]] && update_src_order "$UUID"; continue; }
 
             if [[ $_RMODE == false ]]; then
+                local mp=''
                 [[ -z ${MOUNTPOINT// } ]] && mp="$NAME" || mp="$MOUNTPOINT"
                 mount_ "$mp" -t "$FSTYPE" || exit_ 1 "Could not mount ${mp}."
-                mpnt=$(get_mount $mp) || exit_ 1 "Could not find mount journal entry for $mp. Aborting!" #do not use local, $? will be affected!
-                local used size
+
+                local mpnt=$(get_mount $mp) || exit_ 1 "Could not find mount journal entry for $mp. Aborting!" #do not use local, $? will be affected!
+                local used='' size=''
                 read -r used <<<$(df -k --output=used "$mpnt" | tail -n -1)
                 size=$(sector_to_kbyte $(blockdev --getsz "$NAME"))
+
+                local l=''
+                for l in ${!TO_LVM[@]}; do
+                    if [[ -d $mpnt/$l ]]; then
+                        used=$((used - $(to_kbyte $(du -sb $mpnt/$l)) ))
+                    fi
+                done
                 umount_ "$mp"
             fi
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
-            unset name kdev fstype uuid puuid type parttype mountpoint size
         done < <(echo "$file" | grep -v 'disk' | sort -k 1 -t ' ')
     };_ #}}}
 
     _(){ #{{{
         if [[ $_RMODE == true ]]; then
             pushd "$SRC" >/dev/null || return 1
-            local f i uuid puuid fs type sused dev mnt
-            local sname sfstype spartuuid sparttype stype mp used size
+            local f=''
             for f in [0-9]*; do
+                local i='' uuid='' puuid='' fs='' type='' sused='' dev='' mnt=''
+                local sname='' sfstype='' spartuuid='' sparttype='' stype='' mp='' used='' size=''
                 IFS=. read -r i uuid puuid fs type sused dev mnt <<<"$(pad_novalue "$f")"
                 IFS=: read -r sname sfstype spartuuid sparttype stype mp used size <<<"${SRCS[$uuid]}"
                 if [[ $type == part ]]; then
@@ -1367,7 +1377,7 @@ grub_setup() { #{{{
     local mp r=0
     local resume=$(lsblk -lpo name,fstype "$DEST" | grep swap | gawk '{print $1}')
 
-    mount_ "$d"
+    mount_ "$d" || exit_ 1 "Could not mount ${d}."
     mp=$(get_mount "$d") || exit_ 1 "Could not find mount journal entry for $d. Aborting!" #do not use local, $? will be affected!
 
     sed -i -E '/GRUB_CMDLINE_LINUX=/ s|[a-z=]*UUID=[-0-9a-Z]*[^ ]*[^\"]||' "$mp/etc/default/grub"
@@ -2155,12 +2165,12 @@ Clone() { #{{{
                     [[ $lv_role =~ snapshot ]] && continue
 
                     if (( ${LVM_SIZE_TO[$lv_name]:-0} >0 )); then
-                        lvcreate --yes -L"${LVM_SIZE_TO[$lv_name]}" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed1."
+                        lvcreate --yes -L"${LVM_SIZE_TO[$lv_name]}" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
                     elif ((s1 < s2)); then
-                        lvcreate --yes -L"$lv_size" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed2."
+                        lvcreate --yes -L"$lv_size" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
                     else
                         size=$(echo "scale=0; $lv_size * $scale_factor / 1" | bc)
-                        lvcreate --yes -L$size -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed3."
+                        lvcreate --yes -L$size -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
                     fi
                 fi
             done < <(echo "$lvm_data")
@@ -2306,7 +2316,8 @@ Clone() { #{{{
             dev=${dev//_//}
 
             if [[ -n $ddev ]]; then
-                mount_ "$ddev" && { mpnt=$(get_mount $ddev) || exit_ 1 "Could not find mount journal entry for $ddev. Aborting!"; }
+                mount_ "$ddev" || exit_ 1 "Could not mount $ddev. Aborting!"
+                mpnt=$(get_mount $ddev) || exit_ 1 "Could not find mount journal entry for $ddev. Aborting!"
                 if [[ -n $dir ]]; then
                     mpnt=$(realpath -s "$mpnt/$dir")
                     mnt=$(realpath -s "$mnt/$dir" && mkdir -p "$mpnt")
@@ -2447,15 +2458,15 @@ Clone() { #{{{
                 local tdev="$sdev"
             fi
 
-            mount_ "$tdev"
+            mount_ "$tdev" || exit_ 1 "Could not mount $tdev. Aborting!"
             smpnt=$(get_mount "$tdev") || exit_ 1 "Could not find mount journal entry for $tdev. Aborting!"
 
-            mount_ "$ddev"
+            mount_ "$ddev" || exit_ 1 "Could not mount $ddev. Aborting!"
             dmpnt=$(get_mount "$ddev") || exit_ 1 "Could not find mount journal entry for $tdev. Aborting!"
 
             ((davail - sused <= 0)) && exit_ 10 "Require $(to_readable_size ${sused}K) but $ddev is only $(to_readable_size ${davail}K)"
 
-            if gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
+            if [[ -s  $smpnt/etc/fstab ]] && gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
                 (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt
             fi
 
@@ -2472,7 +2483,7 @@ Clone() { #{{{
                         local user password
                         read -r user password <<<${CHOWN[$em]/:/ }
 
-                        mount_ "$e"
+                        mount_ "$e" || exit_ 1 "Could not mount $e. Aborting!"
                         local smpnt_e=$(get_mount $e) || exit_ 1 "Could not find mount journal entry for $e. Aborting!"
 
                         local o_user=$(stat -c "%u" "$dmpnt/${em/$l/}")
@@ -3241,14 +3252,6 @@ Main() { #{{{
     [[ $PVALL == true && -n $ENCRYPT_PWD ]] && exit_ 1 "Encryption only supported for simple LVM setups with a single PV!"
 
     _(){ #{{{
-        #If empty, nothing happens!
-        local l
-        for l in ${!TO_LVM[@]}; do
-            [[ -d $l ]] || _is_partition "$l" || exit_ 1 "$l is not a valid source partition or folder for LV conversion!"
-        done
-    };_ #}}}
-
-    _(){ #{{{
         #Check that all expected files exists when restoring
         if [[ -d $SRC ]]; then
             local meta_files=("$F_CONTEXT" "$F_PART_LIST" "$F_DEVICE_MAP" "$F_VENDOR_LIST" "$F_PART_TABLE")
@@ -3326,16 +3329,34 @@ Main() { #{{{
         done
     };_ #}}}
 
-    VG_SRC_NAME=($(gawk '{print $2}' < <(if [[ -d $SRC && $IS_LVM == true ]]; then cat "$SRC/$F_PVS_LIST"; else pvs --noheadings -o pv_name,vg_name | grep "$SRC"; fi) | sort -u))
-
     _(){ #{{{
-        if [[ -z $VG_SRC_NAME && $HAS_LUKS == true ]]; then
-            local luks=$(grep -q "$SRC" < <(dmsetup deps -o devname) | gawk '{print $1}' | tr -d ':')
-            VG_SRC_NAME=($(gawk '{print $2}' < <(pvs --noheadings -o pv_name,vg_name | grep "$luks") | sort -u))
+        if [[ -d $SRC && $IS_LVM == true ]]; then
+            VG_SRC_NAME=$(gawk '{print $2}' "$SRC/$F_PVS_LIST" | sort -u)
+        else
+            #Follwing algorithm is a safe-gurad in case there are multiple VGs with similar names.
+            #For instance 'vg00' and 'vg00-1'. This is something that might not happen in reals world
+            #setups, but it will during automated tests!
+
+            local vgs=($(vgs --noheadings -o vg_name))
+            local src_vgs=($(lsblk -nl -o name,type $SRC | grep lvm | gawk '{print $1}'))
+            local -A vgs_set
+            local v s
+            for v in ${vgs[@]}; do 
+                for s in ${src_vgs[@]}; do 
+                    #Store all VGs that match to a LV name including its lengths.
+                    grep -q $v < <(echo $s) && vgs_set[$v]=${#v};
+                done;
+            done
+
+            #Create a list where the index is the length of the VG name
+            local l lengths=()
+            for l in ${!vgs_set[@]}; do
+                lengths[${vgs_set[$l]}]=$l;
+            done
+            #The largest name is the match with most charachters and must be the right source VG name.
+            VG_SRC_NAME=${lengths[-1]}
         fi
     };_ #}}}
-
-    [[ ${#VG_SRC_NAME[@]} -gt 1 ]] && exit_ 1 "Unsupported situation: PVs of $SRC assigned to multiplge VGs."
 
     _(){ #{{{
         if [[ -z $VG_SRC_NAME ]]; then
@@ -3427,4 +3448,4 @@ Main() { #{{{
 } #}}}
 
 #self check and run
-bash -n $(readlink -f $0) && Main "$@"
+bash -n "$(readlink -f "$0")" && Main "$@"
