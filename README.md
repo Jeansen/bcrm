@@ -12,7 +12,7 @@ do live backups without having to use a special rescue image. And I always wante
 
 ## bcrm - what can it do for you?
 
-While bcrm can do do a simple (file-based) clone from system A to B, it can actually do a lot more:
+While bcrm can do a simple (file-based) clone from system A to B, it can also do a lot more:
 
 -   Clone a "legacy" system and convert it to UEFI
 -   Clone or Restore a system and encrypt it with LUKS
@@ -31,8 +31,8 @@ backlog.
 
 You can either clone or backup your system, that is:
 
--   Clone a (live) system (including LVM and GRUB) on another disk.
--   Backup a (live) system to a destination folder and restore from it (including LVM and GRUB).
+-   Clone a (live) system (including LVM and GRUB) to another disk.
+-   Backup a (live) system to a destination folder and restore from it from there (including LVM and GRUB).
 -   If you use LVM you can also choose to encrypt the clone.
 
 ## Intended usage
@@ -40,85 +40,89 @@ You can either clone or backup your system, that is:
 Ideally, the system to be cloned uses LVM and has some free space left for the creation of a snapshot. Before the 
 creation of a clone or backup a snapshot will be created. A destination disk does not have to be the same size as the
 source disk. It can be bigger or smaller. Just make sure it has enough space for all the data! But don't worry, bcrm
-should be smart enough to figure out if the destination is to small, anyway.
+should be smart enough to figure out if the destination is too small, anyway.
 
-When cloning LVM-based systems, the cloned volume group will get the postfix `_<ddmmjjjj>` appended. But you can
-overwrite this with the `-n` option.
+When cloning LVM-based systems, the cloned volume group will get the postfix `_<ddmmjjjj>` appended. You can
+overwrite this with the `-n` argument.
 
 You will need at least 500MB of free space in your volume group, otherwise no snapshot will be created. In this case you
 are on your own, should you clone a live system.
 
 Be aware that this script is not meant for server environments. I have created it to clone or backup my desktop and 
-raspberry Pi systems. I have tested and used it with a standard Raspian installation and standard Debian installations
+raspberry Pi systems. I have tested and used it with a standard Raspberry Pi OS installation and standard Debian installations,
 with and without LVM.
 
 It is also possible to use encryption. That is, when cloning bcrm will create the encryption layer via LUKS before cloning.
-All you have to do is provide the pass phrase.
+All you have to do is provide a pass phrase.
 
 ## Other use cases
 
 Of course, you can also backup or clone systems without LVM. If you are not cloning a live system, there is not much to
 it. But, If you need to clone a live system that is not using LVM, make sure there is a minimum of activity. And even 
-then it would be more secure to take the system offline and proceed from a Live CD.
+then it would be more reliable to take the system offline and proceed from a Live CD.
 
 # Usage
 
-If you need help, just call the script without any options or use the `-h` option.  Otherwise there are only a handful
-of options that are necessary, mainly: `-s` and `-d` each excepting a block device or a folder.
+If you need help, just call the script without any options or use the `-h` option.  Otherwise, there are only a handful
+of options that are necessary, mainly: `-s` and `-d`, each excepting a block device or a folder.
 
-Let's assume the source disk you want to clone or backup is `/dev/sda` and `/dev/sdb` is a destination disk.
+Let's assume the source disk you want to clone `/dev/sda` and `/dev/sdb` is a destination disk.
 
 ## Clone
 
 To clone a disk, us the following command:
 
-    ./pi2clone.sh -s /dev/sda -d /dev/sdb
+    ./bcrm.sh -s /dev/sda -d /dev/sdb
 
 ## Backup
 
 To backup a disk, us the following command:
 
-    ./pi2clone.sh -s /dev/sda -d /mnt/folder/to/clone/into [-x] [-c]
+    ./bcrm.sh -s /dev/sda -d /mnt/folder/to/clone/into [-x] [-c]
 
-With the `-x` option, you can have backup files compressed with XZ and a compression ID of 4. 
-And with the `-c` option, checksums will be created for each backup file.
+With the `-x` flag, you can have backup files compressed with XZ and a compression ID of 4. 
+And with the `-c` flag, checksums will be created for each backup file.
 
 ## Restore
 
 Restoring is the inverse of a backup. Taking the above example, you would just switch the source and
 destination:
 
-    ./pi2clone.sh -s /mnt/folder/to/clone/into -d /dev/sda [-c]
+    ./bcrm.sh -s /mnt/folder/to/clone/into -d /dev/sda [-c]
 
-If you provide the `-c` option, checksums (if available) will be validated before restoring from the backup.
+If you provide the `-c` flag, checksums (if available) will be validated before restoring from the backup.
 
 ## Checksums
 
-If you do a backup, you can use the optional `-c` option. This will create checksums for each backup chunk. When you
-restore the system later on, use the `-c` option again for validation.
+If you do a backup, you can use the optional `-c` flag. This will create checksums for each backup chunk. When you
+restore the system later on, use the `-c` flag again for validation.
 
 ## Encryption
 
-If you use LVM you can use the `-e` option to encrypt your clone. This also works when restoring from a backup folder.
+If you use LVM you can use the `-e` flag to encrypt your clone. This also works when restoring from a backup folder.
 
 ## LVM
 
 When cloning or restoring you can use `-n vg-name` to provide a custom Volume Group name.
 
+## Help
+
+Throughout the years of development more options have been added. Some of them for convenience, others for more advanced scenarios.
+Heck out the help!
+
 ## Safety
 
 The script will take care that you do not fry your system. For instance:
 
--   Invalid combinations will not be accepted. 
--   Missing tools and programs will be announced with installation instructions. 
--   Multiple instances will be prevented. 
--   Multiple checks are run to make sure the destination is actually suitable for a clone or backup.
--   And a lot more checks ...
+- Invalid combinations will not be accepted or ignored.
+- Missing tools and programs will be announced with installation instructions. 
+- Multiple instances will be prevented.
+- Multiple checks are run to make sure the destination is actually suitable for a clone or backup.
+- And a lot more checks ...
 
 # Contributing
 
-Fork it, make a Pull Request, create Issues with suggestions, bugs or questions ... You are always welcome to 
-contribute!
+Fork it, make a Pull Request, create Issues with suggestions, bugs or questions ... You are always welcome to contribute!
 
 # Self-Promotion
 
