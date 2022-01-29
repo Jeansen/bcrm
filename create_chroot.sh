@@ -16,8 +16,8 @@ Main() {
     [[ -n $proxy ]] && export http_proxy=$proxy
 
     debootstrap --include=git,lvm2,bc,pv,parallel,qemu-utils,rsync $code_name "$target"
-    chroot "$target" bash -c debconf-set-selections < <(echo "$debconf_locales")
     #https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=697765 workaround
+    chroot "$target" bash -c debconf-set-selections < <(echo "$debconf_locales")
     for f in sys dev dev/pts proc run; do
       mount --bind /$f $target/$f
     done
