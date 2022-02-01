@@ -42,7 +42,7 @@ declare -r F_CHESUM='check.md5'
 declare -r F_CONTEXT='context'
 declare -r F_VENDOR_LIST='vendor.list'
 declare -r F_DEVICE_MAP='device_map'
-# declare -r F_ROOT_FOLDER_DU='root_folder_du'
+declare -r F_ROOT_FOLDER_DU='root_folder_du'
 
 declare -r SCHROOT_HOME=/tmp/dbs
 declare -r BACKUP_FOLDER=/var/bcrm/backup
@@ -62,16 +62,16 @@ declare -r ID_GPT_LVM=e6d6d379-f507-44c2-a23c-238f2a3df928
 declare -r ID_GPT_EFI=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
 declare -r ID_GPT_LINUX=0fc63daf-8483-4772-8e79-3d69d8477de4
 declare -r ID_DOS_EFI=ef
-declare -r ID_DOS_LVM=8e
+declare -r ID_DOS_LVM='0x8e'
 declare -r ID_DOS_LINUX=83
 declare -r ID_DOS_FAT32=c
-declare -r ID_DOS_EXT=5
+declare -r ID_DOS_EXT='0x5'
 declare _RMODE=false
 declare MODE="" #clone,backup,restore
 #}}}
 
 # PREDEFINED COMMAND SEQUENCES ----------------------------------------------------------------------------------------{{{
-declare -r LSBLK_CMD='lsblk -Ppo NAME,KNAME,FSTYPE,UUID,PARTUUID,TYPE,PARTTYPE,MOUNTPOINT,SIZE'
+declare -r LSBLK_CMD='lsblk -Ppno NAME,KNAME,FSTYPE,UUID,PARTUUID,TYPE,PARTTYPE,MOUNTPOINT,SIZE'
 #}}}
 
 # VARIABLES -----------------------------------------------------------------------------------------------------------{{{
@@ -379,9 +379,9 @@ vendor_compare() { #{{{
         eval local -A from="$1"
         eval local -A to="$2"
     elif (( $# == 1 )); then
-        local input="${1:-$(</dev/stdin)}"
+        local input="$(</dev/stdin)"
         eval local -A from="$input"
-        eval local -A to="$2"
+        eval local -A to="$1"
     else
         return 1
     fi
@@ -442,7 +442,6 @@ ctx_save() { #{{{
         declare -p IS_CHECKSUM
         declare -p HAS_EFI
         declare -p TABLE_TYPE
-        declare -p SRCS_ORDER
     } >"$DEST/$F_CONTEXT"
 
     echo "# Backup date: $(date)" >>"$DEST/$F_CONTEXT"
@@ -759,8 +758,6 @@ mounts() { #{{{
 set_dest_uuids() { #{{{
     logmsg "set_dest_uuids"
 
-    (( ${#DESTS_ORDER} == 0 )) && DESTS_ORDER=($(lsblk -lno uuid,name,type "$DEST" | grep -E 'part|lvm' | awk '{print $1}'))
-
     if [[ -b $DEST && $IS_LVM == true ]]; then
         vgchange -an "$VG_SRC_NAME_CLONE"
         vgchange -ay "$VG_SRC_NAME_CLONE"
@@ -793,13 +790,10 @@ set_dest_uuids() { #{{{
         read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
         eval local "$kdev" "$name" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
-        (( ${#TO_LVM[@]} > 0 )) && _is_lvm_candidate $NAME && { update_dest_order "$UUID"; continue; }
+        (( ${#TO_LVM[@]} > 0 )) && _is_lvm_candidate $NAME && continue
 
         #Filter all we don't want
-        { [[ $FSTYPE == swap ]] ||
-        [[ $UEFI == true && ${PARTTYPE} =~ $ID_GPT_EFI|0x${ID_DOS_EFI} ]] ||
-        [[ $PARTTYPE == 0x5 || $TYPE == crypt || $FSTYPE == crypto_LUKS || $FSTYPE == LVM2_member ]]; } &&
-        { [[ -n $UUID ]] && update_dest_order "$UUID"; continue; }
+        [[ $UEFI == true && ${PARTTYPE} =~ $ID_GPT_EFI|${ID_DOS_EFI} ]] && continue;
 
         local mp
         [[ -z ${MOUNTPOINT// } ]] && mp="$NAME" || mp="$MOUNTPOINT"
@@ -811,27 +805,10 @@ set_dest_uuids() { #{{{
         umount_ "$mp"
 
         DESTS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${avail:- }" #Avail to be checked
+        DESTS_ORDER+=($UUID)
 
         # [[ ${PVS[@]} =~ $NAME ]] && continue
-    done < <($LSBLK_CMD "$DEST" $([[ $PVALL == true ]] && echo ${PVS[@]}) | grep -vE 'disk|UUID="".*PARTUUID=""' | sort -k 1 -t ' ')
-} #}}}
-
-# Unfortunately lsblk does not keep the order with -l or -p. To have the right order, update_src_order() and update_dest_order()
-# create a list and then on every call disposable entries will be filtered out.
-update_src_order() { #{{{
-    local u=''
-    for u in "${!SRCS_ORDER[@]}"; do
-        [[ ${SRCS_ORDER[$u]} == "$1" ]] && unset "SRCS_ORDER[$u]"
-    done
-    SRCS_ORDER=(${SRCS_ORDER[@]})
-} #}}}
-
-update_dest_order() { #{{{
-    local u=''
-    for u in "${!DESTS_ORDER[@]}"; do
-        [[ ${DESTS_ORDER[$u]} == "$1" ]] && unset "DESTS_ORDER[$u]"
-    done
-    DESTS_ORDER=(${DESTS_ORDER[@]})
+    done < <($LSBLK_CMD "$DEST" $([[ $PVALL == true ]] && echo ${PVS[@]}) | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member|swap)\"/ {print $1}" | sort -u -b -k1,1)
 } #}}}
 
 # $1: partition, e.g. /dev/sda1
@@ -849,7 +826,6 @@ get_uuid() { #{{{
 init_srcs() { #{{{
     logmsg "init_srcs"
     local file="$1"
-    (( ${#SRCS_ORDER} == 0 )) && SRCS_ORDER=($(lsblk -lno uuid,name,type --sort name "$SRC" | grep -E 'part|lvm' | awk '{print $1}'))
 
     _(){ #{{{
         local e=''
@@ -861,9 +837,7 @@ init_srcs() { #{{{
             add_device_links "$KNAME"
 
             #Filter all we don't want
-            { [[ $PARTTYPE == 0x5 || $FSTYPE == LVM2_member || $FSTYPE == swap || $TYPE == crypt || $FSTYPE == crypto_LUKS ]] ||
-            lvs -o lv_dmpath,lv_role | grep "$NAME" | grep "snapshot" -q ||
-            [[ $NAME =~ real$|cow$ ]]; } && { [[ -n $UUID ]] && update_src_order "$UUID"; continue; }
+            { lvs -o lv_dmpath,lv_role | grep "$NAME" | grep "snapshot" -q || [[ $NAME =~ real$|cow$ ]]; } && continue
 
             if [[ $_RMODE == false ]]; then
                 local mp=''
@@ -884,7 +858,8 @@ init_srcs() { #{{{
                 umount_ "$mp"
             fi
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
-        done < <(echo "$file" | grep -v 'disk' | sort -k 1 -t ' ')
+            SRCS_ORDER+=($UUID)
+        done < <(echo "$file" | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member|swap)\"/ {print $1}" | sort -u -b -k1,1)
     };_ #}}}
 
     _(){ #{{{
@@ -1289,9 +1264,9 @@ disk_setup() { #{{{
 
             if [[ $sfstype == swap ]]; then
                 mkswap -f "$NAME" && continue
-            elif [[ ${PARTTYPE} =~ $ID_GPT_LVM|0x${ID_DOS_LVM} || $sfstype == LVM2_member ]]; then #LVM
+            elif [[ ${PARTTYPE} =~ $ID_GPT_LVM|${ID_DOS_LVM} || $sfstype == LVM2_member ]]; then #LVM
                 pvcreate -ff "$NAME"
-            elif [[ ${PARTTYPE} =~ $ID_GPT_EFI|0x${ID_DOS_EFI} ]]; then #EFI
+            elif [[ ${PARTTYPE} =~ $ID_GPT_EFI|${ID_DOS_EFI} ]]; then #EFI
                 mkfs -t vfat "$NAME"
                 [[ $UEFI == true ]] && continue
             elif [[ -n ${sfstype// } ]]; then
@@ -1819,7 +1794,7 @@ To_file() { #{{{
                     [[ $e -ge 100 ]] && e=100 #Just a precaution
                     message -u -c -t "Creating backup for $sdev [ $(printf '%3d%%' $e) ]"
                 done < "$FIFO"
-                message -u -c -t "Creating backup for $sdev [ $(printf '%3d%%' 100) ]" #In case we very faster than the update interval of pv, especially when at 98-99%.
+                message -u -c -t "Creating backup for $sdev [ $(printf '%3d%%' 100) ]" #In case we are faster than the update interval of pv, especially when at 98-99%.
             else
                 message -c -t "Creating backup for $sdev"
                 if [[ $SPLIT == true ]]; then
@@ -1914,6 +1889,15 @@ To_file() { #{{{
             sid=${sid// }
             spid=${spid// }
             local file="${g}.${sid// }.${spid// }.${fs// }.${type// }.${used}.${sdev//\//_}.${mount//\//_}"
+
+            _(){ #{{{
+                if [[ -s $mpnt/etc/fstab ]]; then
+                    local f=''
+                    for f in */$mpnt; do
+                        du -sb "$f" >> $F_ROOT_FOLDER_DU
+                    done
+                fi
+            };_ #}}}
 
             _copy "$sdev" $mpnt "$file"
 
@@ -2434,7 +2418,7 @@ Clone() { #{{{
 
             ((davail - sused <= 0)) && exit_ 10 "Require $(to_readable_size ${sused}K) but $ddev is only $(to_readable_size ${davail}K)"
 
-            if [[ -s  $smpnt/etc/fstab ]] && gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
+            if [[ -s $smpnt/etc/fstab ]] && gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
                 (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt
             fi
 
@@ -2509,8 +2493,8 @@ Clone() { #{{{
                 for y in "${SRCS_ORDER[@]}"; do
                     IFS=: read -r sdevname fs spid ptype type rest <<<"${SRCS[$y]}"
                     if [[ $type == part ]]; then
-                        if [[ ! ${ptype} =~ $ID_GPT_LVM|0x${ID_DOS_LVM} \
-                        && ! ${ptype} =~ $ID_GPT_EFI|0x${ID_DOS_EFI} ]]; then
+                        if [[ ! ${ptype} =~ $ID_GPT_LVM|${ID_DOS_LVM} \
+                        && ! ${ptype} =~ $ID_GPT_EFI|${ID_DOS_EFI} ]]; then
                             name="${MOUNTS[$y]##*/}"
                             TO_LVM[$sdevname]="${name:-root}"
                         fi
@@ -2526,7 +2510,7 @@ Clone() { #{{{
                     local name='' fstype='' partuuid='' parttype='' type='' used='' avail=''
                     IFS=: read -r name fstype partuuid parttype type used avail <<<"${SRCS[$f]}"
                     if ! grep -qE "${name}" < <(echo "${!TO_LVM[@]}" | tr ' ' '\n'); then
-                        [[ $type == part && ! $parttype =~ $ID_GPT_EFI|0x${ID_DOS_EFI} ]] \
+                        [[ $type == part && ! $parttype =~ $ID_GPT_EFI|${ID_DOS_EFI} ]] \
                             && exit_ 1 "Cannot encrypt disk. All partitions (except for EFI) must be of type 'lvm'."
                     fi
                 done
@@ -3298,7 +3282,7 @@ _filter_params_x() { #{{{
     _(){ #{{{
         #Check that all expected files exists when restoring
         if [[ -d $SRC ]]; then
-            local meta_files=("$F_CONTEXT" "$F_PART_LIST" "$F_DEVICE_MAP" "$F_VENDOR_LIST" "$F_PART_TABLE")
+            local meta_files=("$F_CONTEXT" "$F_PART_LIST" "$F_DEVICE_MAP" "$F_VENDOR_LIST" "$F_PART_TABLE" "$F_ROOT_FOLDER_DU")
             [[ $IS_CHECKSUM == true ]] && meta_files+=("$F_CHESUM")
             [[ $IS_LVM == true ]] && meta_files+=($F_VGS_LIST $F_LVS_LIST $F_PVS_LIST)
 
