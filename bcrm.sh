@@ -785,6 +785,14 @@ set_dest_uuids() { #{{{
         return 1
     }
 
+    _update_order() {
+        local order=($(lsblk -lnpo uuid $DEST))
+        local e=''
+        for e in "${!order[@]}"; do
+            [[ ${order[$e]} == $1 ]] && DESTS_ORDER["$e"]="$1"
+        done
+    }
+
     local name kdev fstype uuid puuid type parttype mountpoint size e
     while read -r e; do
         read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
@@ -805,10 +813,11 @@ set_dest_uuids() { #{{{
         umount_ "$mp"
 
         DESTS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${avail:- }" #Avail to be checked
-        DESTS_ORDER+=($UUID)
+        _update_order "$UUID"
 
         # [[ ${PVS[@]} =~ $NAME ]] && continue
     done < <($LSBLK_CMD "$DEST" $([[ $PVALL == true ]] && echo ${PVS[@]}) | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member|swap)\"/ {print $1}" | sort -u -b -k1,1)
+    DESTS_ORDER=(${DESTS_ORDER[@]})
 } #}}}
 
 # $1: partition, e.g. /dev/sda1
@@ -826,6 +835,15 @@ get_uuid() { #{{{
 init_srcs() { #{{{
     logmsg "init_srcs"
     local file="$1"
+    local srcs_order_selected=()
+
+    _update_order() {
+        local order=($(lsblk -lnpo uuid $SRC))
+        local e=''
+        for e in "${!order[@]}"; do
+            [[ ${order[$e]} == $1 ]] && SRCS_ORDER["$e"]="$1"
+        done
+    }
 
     _(){ #{{{
         local e=''
@@ -858,8 +876,10 @@ init_srcs() { #{{{
                 umount_ "$mp"
             fi
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
-            SRCS_ORDER+=($UUID)
+            _update_order "$UUID"
+            srcs_order_selected=srcs_order
         done < <(echo "$file" | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member|swap)\"/ {print $1}" | sort -u -b -k1,1)
+        SRCS_ORDER=(${SRCS_ORDER[@]})
     };_ #}}}
 
     _(){ #{{{
@@ -2539,6 +2559,11 @@ Clone() { #{{{
         #Now collect what we have created
         set_dest_uuids
         _src2dest
+        declare -p SRCS
+        declare -p SRCS_ORDER
+        declare -p DESTS
+        declare -p DESTS_ORDER
+        declare -p SRC2DEST
     }
     message -y
 
