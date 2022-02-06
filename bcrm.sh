@@ -2559,11 +2559,6 @@ Clone() { #{{{
         #Now collect what we have created
         set_dest_uuids
         _src2dest
-        declare -p SRCS
-        declare -p SRCS_ORDER
-        declare -p DESTS
-        declare -p DESTS_ORDER
-        declare -p SRC2DEST
     }
     message -y
 
