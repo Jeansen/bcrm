@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=039be5f
+declare VERSION=895b2c1
 declare -r LOG_PATH='/tmp'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
 declare -r F_SCHROOT_CONFIG='/etc/schroot/chroot.d/bcrm'
