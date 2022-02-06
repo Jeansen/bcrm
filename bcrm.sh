@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=895b2c1
+declare VERSION=56f3e44
 declare -r LOG_PATH='/tmp'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
 declare -r F_SCHROOT_CONFIG='/etc/schroot/chroot.d/bcrm'
@@ -442,6 +442,7 @@ ctx_save() { #{{{
         declare -p IS_CHECKSUM
         declare -p HAS_EFI
         declare -p TABLE_TYPE
+        declare -p SRCS_ORDER
     } >"$DEST/$F_CONTEXT"
 
     echo "# Backup date: $(date)" >>"$DEST/$F_CONTEXT"
@@ -874,9 +875,9 @@ init_srcs() { #{{{
                     fi
                 done
                 umount_ "$mp"
+                _update_order "$UUID"
             fi
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
-            _update_order "$UUID"
             srcs_order_selected=srcs_order
         done < <(echo "$file" | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member|swap)\"/ {print $1}" | sort -u -b -k1,1)
         SRCS_ORDER=(${SRCS_ORDER[@]})
