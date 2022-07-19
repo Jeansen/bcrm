@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=56f3e44
+declare VERSION=e16910b
 declare -r LOG_PATH='/tmp'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
 declare -r F_SCHROOT_CONFIG='/etc/schroot/chroot.d/bcrm'
@@ -494,18 +494,23 @@ mount_exta_lvm() { #{{{
 
     shift $((OPTIND - 1))
 
-    local -A arr
-    while read -r k v; do arr[$k]="$v"; done <<<$(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
+    local -A lvs_dmpaths
+    local -A dmpath_uuids
+    while read -r k v; do lvs_dmpaths[$k]="$v"; done <<<$(lvs --no-headings -o lv_name,dm_path "$VG_SRC_NAME_CLONE" | gawk '{print $1,$2}')
+    while read -r j w; do dmpath_uuids[$j]="$w"; done <<<$(lsblk -nlo path,uuid "$DEST" | gawk '{if ($2) print $1,$2}')
 
-    local l='' name=''
+    local l='' name='' paht='' uuid=''
     for l in "${!TO_LVM[@]}"; do
         IFS=: read -r name size fs <<<"${TO_LVM[$l]}"
+        path="${lvs_dmpaths[$name]}"
+        uuid="${dmpath_uuids[${path}]}"
         if [[ $update_fstab == true && -s "$dmpnt/etc/fstab" && ! $l =~ ^/dev ]]; then
-            printf "%s\t%s\t%s\terrors=remount-ro\t0\t1\n" "${arr[$name]}" "$l" "$fs" >> "$dmpnt/etc/fstab"
-        elif [[ -n ${arr[$name]} && -n $fs ]]; then
+            [[ -z $uuid ]] && exit_ 1 "Missing UUID for $name [$path]"
+            printf "%s\t%s\t%s\terrors=remount-ro\t0\t1\n" "UUID=$uuid" "$l" "$fs" >> "$dmpnt/etc/fstab"
+        elif [[ -n $path && -n $fs ]]; then
             [[ -n $smpnt && -n $dmpnt ]] && rsync -av -f"+ $l" -f"- *" "$smpnt/$l" "$dmpnt"
 			[[ $create == true ]] && mkdir -p "$dmpnt/$l"
-			mount_ "${arr[$name]}" -p "$dmpnt/$l"
+			mount_ "$path" -p "$dmpnt/$l"
         fi
     done
 } #}}}
