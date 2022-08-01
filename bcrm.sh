@@ -28,8 +28,9 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=e16910b
-declare -r LOG_PATH='/tmp'
+declare VERSION=3025d02
+declare -r LOG_PATH="$(mktemp -d)"
+declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
 declare -r F_SCHROOT_CONFIG='/etc/schroot/chroot.d/bcrm'
 declare -r F_SCHROOT='bcrm.stretch.tar.xz'
@@ -525,10 +526,15 @@ find_mount_part() { #{{{
 mount_(){ #{{{
     local cmd="mount"
     local OPTIND
-    local src=$(realpath -s "$1")
+    local src=''
     local path=''
 
-    mkdir -p "${MNTPNT}/$src" && path=$(realpath -s "${MNTPNT}/$src")
+    if [[ $1 != tmpfs ]]; then
+        src=$(realpath -s "$1")
+        mkdir -p "${MNTPNT}/$src" && path=$(realpath -s "${MNTPNT}/$src")
+    else
+        local src="$1"
+    fi
 
     shift
 
@@ -1677,6 +1683,10 @@ sector_to_tbyte() { #{{{
 
 Cleanup() { #{{{
     {
+        message -i -t "Saving active logfile to: $LOG_PATH_ON_DISK"
+        mkdir -p $LOG_PATH_ON_DISK
+        cp -r ${LOG_PATH}/* ${LOG_PATH_ON_DISK}
+
         logmsg "Cleanup"
         if [[ $IS_CLEANUP == true ]]; then
             umount_
@@ -1865,7 +1875,7 @@ To_file() { #{{{
         message -y
     };_ #}}}
 
-    if [[ $IS_LVM ]]; then
+    if [[ $IS_LVM == true ]]; then
         local vg_src_name=$(pvs --noheadings -o pv_name,vg_name | grep "$SRC" | xargs | gawk '{print $2}')
         if [[ -z $vg_src_name ]]; then
             while read -r e g; do
@@ -2914,6 +2924,9 @@ _filter_params_x() { #{{{
     #Force root
     [[ $(id -u) -ne 0 ]] && exec sudo "$0" "$@"
 
+    message -i -t "Active log path: $LOG_PATH"
+    mount_ tmpfs -t tmpfs -o size=10m -p $LOG_PATH || exit_ 1 "ERROR: Could not mount file system for logfiles."
+
     echo >"$F_LOG"
 
     SYS_HAS_EFI=$([[ -d /sys/firmware/efi ]] && echo true || echo false)
@@ -3418,7 +3431,7 @@ _filter_params_x() { #{{{
         if [[ -z $VG_SRC_NAME ]]; then
             while read -r e g; do
                 grep -q ${SRC##*/} < <(dmsetup deps -o devname | sort -u | sed 's/.*(\(\w*\).*/\1/g') && VG_SRC_NAME=$g
-            done < <(if [[ -d $SRC && $IS_LVM == true ]]; then cat "$SRC/$F_PVS_LIST"; else pvs --noheadings -o pv_name,vg_name; fi)
+            done < <(if [[ -d $SRC ]]; then cat "$SRC/$F_PVS_LIST"; else pvs --noheadings -o pv_name,vg_name; fi)
         else
             vg_disks "$VG_SRC_NAME" "VG_DISKS" && IS_LVM=true
             if [[ -b $SRC ]] && grep -q 'LVM2_member' < <(lsblk -lpo fstype $SRC); then
