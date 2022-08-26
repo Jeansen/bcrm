@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=3025d02
+declare VERSION=aa20c70
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -865,6 +865,7 @@ init_srcs() { #{{{
             eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
             add_device_links "$KNAME"
+            [[ $FSTYPE == swap ]] && continue
 
             #Filter all we don't want
             { lvs -o lv_dmpath,lv_role | grep "$NAME" | grep "snapshot" -q || [[ $NAME =~ real$|cow$ ]]; } && continue
@@ -890,7 +891,7 @@ init_srcs() { #{{{
             fi
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
             srcs_order_selected=srcs_order
-        done < <(echo "$file" | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member|swap)\"/ {print $1}" | sort -u -b -k1,1)
+        done < <(echo "$file" | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member)\"/ {print $1}" | sort -u -b -k1,1)
         SRCS_ORDER=(${SRCS_ORDER[@]})
     };_ #}}}
 
