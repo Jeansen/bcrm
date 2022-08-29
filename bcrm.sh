@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=aa20c70
+declare VERSION=f1fd4b4
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -78,16 +78,18 @@ declare -r LSBLK_CMD='lsblk -Ppno NAME,KNAME,FSTYPE,UUID,PARTUUID,TYPE,PARTTYPE,
 # VARIABLES -----------------------------------------------------------------------------------------------------------{{{
 
 # GLOBALS -------------------------------------------------------------------------------------------------------------{{{
-declare -A SRCS
-declare -A DESTS
-declare -A CONTEXT          #Values needed for backup/restore
+declare -A SRCS #[uuid]<dev>:<fs>,<part-uuid>,<part-type>,<disk|part>,<mountpoint>,<used>,<size>
+declare -A DESTS #[uuid]<dev>:<fs>,<part-uuid>,<part-type>,<disk|part>,<mountpoint>,<used>,<size>
 
 declare -A CHG_SYS_FILES    #Container for system files that needed to be changed during execution
-                            #Key = original file path, Value = MD5sum
+                            #[<original file path>]<MD5sum>
 
-declare -A MNTJRNL MOUNTS
-declare -A SRC2DEST PSRC2PDEST NSRC2NDEST
-declare -A DEVICE_MAP
+declare -A MOUNTS #[part-uuid|uuid|dev]mountpoint A mountpoint can existist for each key!
+declare -A MNTJRNL
+declare -A SRC2DEST #[uuid]uuid
+declare -A PSRC2PDEST #[part-uuid]part-uuid
+declare -A NSRC2NDEST #[dev]dev
+declare -A DEVICE_MAP #Cartesian product of name, kname, dm and disk-by-uuid
 
 declare PVS=() VG_DISKS=() CHROOT_MOUNTS=()
 #}}}
@@ -409,7 +411,7 @@ vendor_list() { #{{{
         rsync)
             v[$t]="$($t --version | head -n1 | gawk '{print $1, $2, $3}')"
             ;;
-        tar|flock|bc|blockdev|fdisk|sfdisk|parted)
+        tar|flock|bc|blockdev|fdisk|sfdisk|parted|fsfreeze)
             v[$t]="$($t --version | head -n1)"
             ;;
         'mkfs.vfat'|'mkfs')
@@ -516,11 +518,19 @@ mount_exta_lvm() { #{{{
     done
 } #}}}
 
+# $1: <part-uuid,uuid,dev>
 find_mount_part() { #{{{
     local m=''
     for m in $(echo "${!MOUNTS[@]}" | tr ' ' '\n' | sort -r | grep -E '^/' | grep -v -E '^/dev/'); do
-        [[ $1 =~ $m ]] && echo "$m" && return 0
+        [[ $1 =~ $m ]] && echo "$m"
     done
+} #}}}
+
+
+# $1: <mountpoint>
+get_part() { #{{{
+    local p=$(df -l --output=target,source | grep -E "$1" | awk '{print $2}')
+    echo "$p"
 } #}}}
 
 mount_(){ #{{{
@@ -1677,6 +1687,47 @@ sector_to_tbyte() { #{{{
 } #}}}
 #}}}
 
+fsfreeze_() { #{{{
+    local mpnt="$1"
+    local OPTIND
+    local option
+    local opts=""
+    local part=$(get_part "$mpnt")
+
+    shift 1
+
+    while getopts ':fu' option; do
+        case "$option" in
+        f)
+            local msg="Freezing $part"
+            local failmsg="Could not freeze $part"
+            local opts="-$option"
+            ;;
+        u)
+            local msg="Unfreezing $part"
+            local failmsg="Could not unfreeze $part"
+            local opts="-$option"
+            ;;
+        :)
+            exit_ 5 "Method call error: \t${FUNCNAME[0]}()\tMissing argument for $OPTARG"
+            ;;
+        ?)
+            exit_ 5 "Method call error: \t${FUNCNAME[0]}()\tIllegal option: $OPTARG"
+            ;;
+        esac
+    done
+
+    shift $((OPTIND - 1))
+
+
+    if [[ $IS_LVM == true || -z $opts || -z $mpnt ]]; then
+        return 1
+    else
+        logmsg "$msg"
+        message -i -t "$msg"
+        fsfreeze $opts $mpnt || exit_ 1 "$failmsg"
+    fi
+} #}}}
 
 #}}}
 
@@ -1787,6 +1838,8 @@ To_file() { #{{{
         local cmd="tar --warning=none --atime-preserve=system --numeric-owner --xattrs --directory=$mpnt"
         local ss=${MOUNTS[$sdev]}
 
+        fsfreeze_ $mpnt -f
+
         _(){ #{{{
             local x='' excl="--exclude='./run/*' --exclude='./tmp/*' --exclude='./proc/*' --exclude='./dev/*' --exclude='./sys/*'"
             for x in ${SRC_EXCLUDES[@]}; do
@@ -1841,6 +1894,8 @@ To_file() { #{{{
                 fi
                 eval "$cmd"
             fi
+
+            fsfreeze_ $mpnt -u
         };_ #}}}
 
         _(){ #{{{
@@ -2370,8 +2425,10 @@ Clone() { #{{{
     } #}}}
 
         _copy() { #{{{
-            local sdev=$1 ddev=$2 smpnt=$3 dmpnt=$4 excludes=() cmd
+            local sdev=$1 ddev=$2 smpnt=$3 dmpnt=$4 excludes=() cmd=
             local ss=${MOUNTS[$sdev]}
+
+            fsfreeze_ $smpnt -f
 
             [[ -n $5 ]] && excludes=(${EXCLUDES[$5]//:/ })
 
@@ -2410,6 +2467,8 @@ Clone() { #{{{
                     message -c -t "Cloning $sdev to $ddev"
                     eval rsync -aSXxH $cmd "$smpnt/" "$dmpnt"
                 fi
+
+                fsfreeze_ $smpnt -u
             };_ #}}}
             message -y
         } #}}}
@@ -3178,7 +3237,8 @@ _filter_params_x() { #{{{
 
     grep -q 'LVM2_member' < <([[ -d $SRC ]] && cat "$SRC/$F_PART_LIST" || lsblk -o FSTYPE "$SRC") && PKGS+=(lvm)
 
-    PKGS+=(gawk rsync tar flock bc blockdev fdisk sfdisk locale-gen git mkfs parted)
+    #Don't forget to adapt vendor_list() when changing packages !!!
+    PKGS+=(gawk rsync tar flock bc blockdev fdisk sfdisk locale-gen git mkfs parted fsfreeze)
     [[ -d $SRC ]] && PKGS+=(fakeroot) && _RMODE=true
 
     _(){ #{{{
@@ -3404,7 +3464,7 @@ _filter_params_x() { #{{{
             VG_SRC_NAME=$(gawk '{print $2}' "$SRC/$F_PVS_LIST" | sort -u)
         else
             #Follwing algorithm is a safe-gurad in case there are multiple VGs with similar names.
-            #For instance 'vg00' and 'vg00-1'. This is something that might not happen in reals world
+            #For instance 'vg00' and 'vg00-1'. This is something that might not happen in real world
             #setups, but it will during automated tests!
 
             local vgs=($(vgs --noheadings -o vg_name))
@@ -3424,7 +3484,7 @@ _filter_params_x() { #{{{
                 lengths[${vgs_set[$l]}]=$l;
             done
             #The largest name is the match with most charachters and must be the right source VG name.
-            VG_SRC_NAME=${lengths[-1]}
+            [[ ${lengths[@]// } ]] && VG_SRC_NAME=${lengths[-1]}
         fi
     };_ #}}}
 
