@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=f1fd4b4
+declare VERSION=e0138b1
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -875,7 +875,11 @@ init_srcs() { #{{{
             eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
             add_device_links "$KNAME"
-            [[ $FSTYPE == swap ]] && continue
+            if [[ $ALL_TO_LVM == true && $FSTYPE == swap ]]; then 
+                size=$(sector_to_kbyte $(blockdev --getsz "$NAME"))
+                TO_LVM[$NAME]="swap:${size}:${FSTYPE}"
+                continue;
+            elif [[ $FSTYPE == swap ]]; then continue; fi
 
             #Filter all we don't want
             { lvs -o lv_dmpath,lv_role | grep "$NAME" | grep "snapshot" -q || [[ $NAME =~ real$|cow$ ]]; } && continue
@@ -1306,7 +1310,7 @@ disk_setup() { #{{{
             IFS=: read -r sname sfstype <<<${parts[$n]}
 
             if [[ $sfstype == swap ]]; then
-                mkswap -f "$NAME" && continue
+                [[ $ALL_TO_LVM == true ]] && pvcreate -ff "$NAME" || mkswap -f "$NAME"
             elif [[ ${PARTTYPE} =~ $ID_GPT_LVM|${ID_DOS_LVM} || $sfstype == LVM2_member ]]; then #LVM
                 pvcreate -ff "$NAME"
             elif [[ ${PARTTYPE} =~ $ID_GPT_EFI|${ID_DOS_EFI} ]]; then #EFI
@@ -2100,7 +2104,7 @@ Clone() { #{{{
             if [[ -n ${TO_LVM[$part]} ]]; then
                 local partid=$(get_uuid $part)
                 local lv_name=${TO_LVM[$part]}
-                IFS=: read -r sname fs spid ptype type mp used size <<<"${SRCS[$partid]}"
+                IFS=: read -r lv_name size fs <<<"${TO_LVM[$part]}"
                 size=$(to_mbyte ${size}K)
                 local part_size_src=${size%%.*}
                 local part_size_dest=${size%%.*}
@@ -2226,10 +2230,12 @@ Clone() { #{{{
 
                 local lv_size=''
                 if [[ -n ${TO_LVM[$sname]} && $sname != "$BOOT_PART" ]] ; then
+                    local lv_name='' size='' fs=''
+                    IFS=: read -r lv_name size fs <<<"${TO_LVM[$sname]}"
                     lv_size=$(to_mbyte ${size}K) #TODO to_mbyte should be able to deal with floats
                     ((s1 > s2)) && lv_size=$(echo "scale=0; $lv_size * $scale_factor / 1" | bc)
                     (( vg_free < lv_size  )) && lv_size=$vg_free
-                    lvcreate --yes -L$lv_size -n "${TO_LVM[$sname]}" "$VG_SRC_NAME_CLONE" || return 1
+                    lvcreate --yes -L$lv_size -n "$lv_name" "$VG_SRC_NAME_CLONE" || return 1
                 fi
             done
         };_ #}}}
@@ -2585,14 +2591,14 @@ Clone() { #{{{
 
         _(){ #{{{
             if [[ $ALL_TO_LVM == true ]]; then
-                local y sdevname fs spid ptype type rest
+                local y sdevname fs spid ptype type mp used size
                 for y in "${SRCS_ORDER[@]}"; do
-                    IFS=: read -r sdevname fs spid ptype type rest <<<"${SRCS[$y]}"
+                    IFS=: read -r sdevname fs spid ptype type mp used size <<<"${SRCS[$y]}"
                     if [[ $type == part ]]; then
                         if [[ ! ${ptype} =~ $ID_GPT_LVM|${ID_DOS_LVM} \
                         && ! ${ptype} =~ $ID_GPT_EFI|${ID_DOS_EFI} ]]; then
                             name="${MOUNTS[$y]##*/}"
-                            TO_LVM[$sdevname]="${name:-root}"
+                            TO_LVM[$sdevname]="${name:-root}:${size}:${fs}"
                         fi
                     fi
                 done
