@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=e0138b1
+declare VERSION=ffffb26
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -511,9 +511,9 @@ mount_exta_lvm() { #{{{
             [[ -z $uuid ]] && exit_ 1 "Missing UUID for $name [$path]"
             printf "%s\t%s\t%s\terrors=remount-ro\t0\t1\n" "UUID=$uuid" "$l" "$fs" >> "$dmpnt/etc/fstab"
         elif [[ -n $path && -n $fs ]]; then
-            [[ -n $smpnt && -n $dmpnt ]] && rsync -av -f"+ $l" -f"- *" "$smpnt/$l" "$dmpnt"
-			[[ $create == true ]] && mkdir -p "$dmpnt/$l"
-			mount_ "$path" -p "$dmpnt/$l"
+            #[[ -n $smpnt && -n $dmpnt ]] && rsync -av -f"+ $l" -f"- *" "$smpnt/$l" "$dmpnt"
+            [[ $create == true ]] && mkdir -p "$dmpnt/$l"
+            mount_ "$path" -p "$dmpnt/$l"
         fi
     done
 } #}}}
@@ -524,13 +524,6 @@ find_mount_part() { #{{{
     for m in $(echo "${!MOUNTS[@]}" | tr ' ' '\n' | sort -r | grep -E '^/' | grep -v -E '^/dev/'); do
         [[ $1 =~ $m ]] && echo "$m"
     done
-} #}}}
-
-
-# $1: <mountpoint>
-get_part() { #{{{
-    local p=$(df -l --output=target,source | grep -E "$1" | awk '{print $2}')
-    echo "$p"
 } #}}}
 
 mount_(){ #{{{
@@ -875,10 +868,11 @@ init_srcs() { #{{{
             eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
             add_device_links "$KNAME"
-            if [[ $ALL_TO_LVM == true && $FSTYPE == swap ]]; then 
+            if [[ $ALL_TO_LVM == true && $FSTYPE == swap ]]; then
                 size=$(sector_to_kbyte $(blockdev --getsz "$NAME"))
                 TO_LVM[$NAME]="swap:${size}:${FSTYPE}"
                 continue;
+            elif [[ ${TO_LVM[$NAME]} ]]; then TO_LVM[$NAME]+=":$FSTYPE"
             elif [[ $FSTYPE == swap ]]; then continue; fi
 
             #Filter all we don't want
@@ -1215,7 +1209,7 @@ expand_disk() { #{{{
     _(){ #{{{
         local p
         for p in "${!TO_LVM[@]}"; do
-            [[ ! -d $p ]] && _set_type "$p"
+            [[ $p =~ ^/dev ]] && _set_type "$p"
         done
     };_ #}}}
 
@@ -1691,12 +1685,13 @@ sector_to_tbyte() { #{{{
 } #}}}
 #}}}
 
+#EFI partitions with e.g. vfat cannot be frozen
 fsfreeze_() { #{{{
     local mpnt="$1"
     local OPTIND
     local option
     local opts=""
-    local part=$(get_part "$mpnt")
+    local part=$(lsblk -lnpo name,mountpoint | grep -E "$mpnt" | awk '{print $1}')
 
     shift 1
 
@@ -1728,8 +1723,7 @@ fsfreeze_() { #{{{
         return 1
     else
         logmsg "$msg"
-        message -i -t "$msg"
-        fsfreeze $opts $mpnt || exit_ 1 "$failmsg"
+        fsfreeze $opts $mpnt || return 1
     fi
 } #}}}
 
@@ -2431,6 +2425,7 @@ Clone() { #{{{
     } #}}}
 
         _copy() { #{{{
+            logmsg "[ Clone ] _copy"
             local sdev=$1 ddev=$2 smpnt=$3 dmpnt=$4 excludes=() cmd=
             local ss=${MOUNTS[$sdev]}
 
@@ -3206,6 +3201,7 @@ _filter_params_x() { #{{{
 						local src_path lv_name size
                         read -r src_path lv_name size <<<"${p//:/ }"
                         validate_size "$size" || exit_ 1 "Invalid size."
+                        size=$(to_kbyte $size)
                         [[ -z $lv_name ]] && exit_ 1 "Missing LV name"
                         if _is_valid_lv_name "$lv_name"; then
                             if [[ -d $src_path ]]; then
