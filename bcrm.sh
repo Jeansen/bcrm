@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=ffffb26
+declare VERSION=66c5217
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -92,6 +92,7 @@ declare -A NSRC2NDEST #[dev]dev
 declare -A DEVICE_MAP #Cartesian product of name, kname, dm and disk-by-uuid
 
 declare PVS=() VG_DISKS=() CHROOT_MOUNTS=()
+declare FROZEN_MNT=""
 #}}}
 
 # FILLED BY OR BECAUSE OF PROGRAM ARGUMENTS ---------------------------------------------------------------------------{{{
@@ -869,7 +870,7 @@ init_srcs() { #{{{
 
             add_device_links "$KNAME"
             if [[ $ALL_TO_LVM == true && $FSTYPE == swap ]]; then
-                size=$(sector_to_kbyte $(blockdev --getsz "$NAME"))
+                size=$(to_kbyte $SIZE)
                 TO_LVM[$NAME]="swap:${size}:${FSTYPE}"
                 continue;
             elif [[ ${TO_LVM[$NAME]} ]]; then TO_LVM[$NAME]+=":$FSTYPE"
@@ -1687,22 +1688,20 @@ sector_to_tbyte() { #{{{
 
 #EFI partitions with e.g. vfat cannot be frozen
 fsfreeze_() { #{{{
-    local mpnt="$1"
     local OPTIND
     local option
     local opts=""
-    local part=$(lsblk -lnpo name,mountpoint | grep -E "$mpnt" | awk '{print $1}')
 
-    shift 1
-
-    while getopts ':fu' option; do
+    while getopts ':f:Uu:' option; do
         case "$option" in
         f)
+            local part=$(lsblk -lnpo name,mountpoint | grep -E "$OPTARG" | awk '{print $1}')
             local msg="Freezing $part"
             local failmsg="Could not freeze $part"
             local opts="-$option"
             ;;
         u)
+            local part=$(lsblk -lnpo name,mountpoint | grep -E "$OPTARG" | awk '{print $1}')
             local msg="Unfreezing $part"
             local failmsg="Could not unfreeze $part"
             local opts="-$option"
@@ -1718,15 +1717,18 @@ fsfreeze_() { #{{{
 
     shift $((OPTIND - 1))
 
-
     if [[ $IS_LVM == true || -z $opts || -z $mpnt ]]; then
         return 1
     else
         logmsg "$msg"
+        FROZEN_MNT=$mpnt
         fsfreeze $opts $mpnt || return 1
     fi
 } #}}}
 
+fsunfreeze() { #{{{
+    [[ -n $FROZEN_MNT ]] && fsfreeze_ -u $FROZEN_MNT
+} #}}}
 #}}}
 
 # PUBLIC - To be used in Main() only ----------------------------------------------------------------------------------{{{
@@ -1738,6 +1740,7 @@ Cleanup() { #{{{
         cp -r ${LOG_PATH}/* ${LOG_PATH_ON_DISK}
 
         logmsg "Cleanup"
+        unfreeze
         if [[ $IS_CLEANUP == true ]]; then
             umount_
             [[ $SCHROOT_HOME =~ ^/tmp/ ]] && rm -rf "$SCHROOT_HOME" #TODO add option to overwrite and show warning
@@ -2066,7 +2069,7 @@ Clone() { #{{{
         local lvm_data=$({ [[ $_RMODE == true ]] && cat "$SRC/$F_LVS_LIST" || $lvs_cmd; } | grep -E "\b$VG_SRC_NAME\b")
 
         local vg_data=$(vgs --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free | grep -E "\b$VG_SRC_NAME\b|\b$VG_SRC_NAME_CLONE\b")
-        [[ $_RMODE == true ]] && vg_data=$(echo -e "$vg_data\n$(cat $SRC/$F_VGS_LIST)")
+        [[ $_RMODE == true && $ALL_TO_LVM == false ]] &&  vg_data=$(echo -e "$vg_data\n$(cat $SRC/$F_VGS_LIST)")
 
         local -i fixd_size_dest=0
         local -i fixd_size_src=0
@@ -2166,8 +2169,8 @@ Clone() { #{{{
                     [[ $vg_name == "$VG_SRC_NAME_CLONE" ]] && s2=$((${vg_free%%.*} - $fixd_size_dest - $VG_FREE_SIZE))
                 done < <(echo "$vg_data")
 
-                local f=$({ [[ $_RMODE == true ]] && cat "$SRC/$F_PART_LIST" || $LSBLK_CMD "$SRC"; } | grep 'SWAP')
-                if [[ -n $f  ]]; then
+                local f=$({ [[ $_RMODE == true ]] && cat "$SRC/$F_PART_LIST" || $LSBLK_CMD "$SRC"; } | grep -i 'SWAP')
+                if [[ -n $f ]]; then
                     local name='' kdev='' fstype='' uuid='' puuid='' type='' parttype='' mountpoint='' size=''
                     read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$f"
                     eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
@@ -3506,6 +3509,12 @@ _filter_params_x() { #{{{
     [[ $SRC == "$ROOT_DISK" && $IS_LVM == false && $IS_CHECKSUM == true ]] && LIVE_CHECKSUMS=false && message -w -t "No LVM system detected. File integrity checks disabled."
 
     [[ $ALL_TO_LVM == true && -z $VG_SRC_NAME && -z $VG_SRC_NAME_CLONE && ! -d $DEST ]] && exit_ 1 "You need to provide a VG name when convertig a standard disk to LVM."
+
+    if [[ ${#TO_LVM[@]} >0 ]]; then
+        for l in ${!TO_LVM[@]}; do
+            [[ $l =~ ^/dev && ! $l =~ ^$SRC ]] && exit_ 1 "Partition $l cannot be convered. Not a valid source partition!"
+        done
+    fi
 
     _(){ #{{{
         if [[ $IS_LVM == true ]]; then
