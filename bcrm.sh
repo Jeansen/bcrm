@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=66c5217
+declare VERSION=3c78e2c
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -928,9 +928,11 @@ init_srcs() { #{{{
 
 # $1: <mount point>
 # $2: "<dest-dev>"
+# $3: "<packages to install>"
 grub_install() { #{{{
     logmsg "grub_install"
     chroot "$1" bash -c "
+        debconf-set-selections <<< 'grub-pc grub-pc/install_devices multiselect $2'
         DEBIAN_FRONTEND=noninteractive apt-get install -y $3 &&
         grub-install $2 &&
         update-grub &&
