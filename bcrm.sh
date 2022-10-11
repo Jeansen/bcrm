@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=3c78e2c
+declare VERSION=076559e
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -2576,7 +2576,7 @@ Clone() { #{{{
             SRC2DEST[${SRCS_ORDER[$i]}]=${DESTS_ORDER[$i]}
             [[ -n ${spid// } && -n ${dpid// } ]] && PSRC2PDEST[$spid]=$dpid
             [[ -n ${sdev// } && -n ${ddev// } ]] && NSRC2NDEST[$sdev]=$ddev
-            [[ -n ${spid// } && -n ${dpid// } ]] && PSRC2PDEST[$spid]=$ddev
+            [[ -n ${spid// } && -z ${dpid// } ]] && PSRC2PDEST[$spid]=$ddev
         done
     } #}}}
 
