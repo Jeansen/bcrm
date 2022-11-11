@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=076559e
+declare VERSION=0f6323e
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -37,7 +37,6 @@ declare -r F_SCHROOT='bcrm.stretch.tar.xz'
 declare -r F_PART_LIST='part_list'
 declare -r F_VGS_LIST='vgs_list'
 declare -r F_LVS_LIST='lvs_list'
-declare -r F_PVS_LIST='pvs_list'
 declare -r F_PART_TABLE='part_table'
 declare -r F_CHESUM='check.md5'
 declare -r F_CONTEXT='context'
@@ -447,6 +446,7 @@ ctx_save() { #{{{
         declare -p HAS_EFI
         declare -p TABLE_TYPE
         declare -p SRCS_ORDER
+        declare -p VG_SRC_NAME
     } >"$DEST/$F_CONTEXT"
 
     echo "# Backup date: $(date)" >>"$DEST/$F_CONTEXT"
@@ -1809,12 +1809,6 @@ To_file() { #{{{
         [[ -z $snp ]] && snp="NOSNAPSHOT"
 
         if [[ $IS_LVM == true ]]; then
-            pvs --noheadings -o pv_name,vg_name,lv_active \
-                | grep 'active$' \
-                | sed -e 's/active$//;s/^\s*//' \
-                | uniq \
-                | grep -E "\b$VG_SRC_NAME\b" >$F_PVS_LIST
-
             vgs --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free,lv_active \
                 | grep 'active$' \
                 | sed -e 's/active$//;s/^\s*//' \
@@ -3391,7 +3385,7 @@ _filter_params_x() { #{{{
         if [[ -d $SRC ]]; then
             local meta_files=("$F_CONTEXT" "$F_PART_LIST" "$F_DEVICE_MAP" "$F_VENDOR_LIST" "$F_PART_TABLE" "$F_ROOT_FOLDER_DU")
             [[ $IS_CHECKSUM == true ]] && meta_files+=("$F_CHESUM")
-            [[ $IS_LVM == true ]] && meta_files+=($F_VGS_LIST $F_LVS_LIST $F_PVS_LIST)
+            [[ $IS_LVM == true ]] && meta_files+=($F_VGS_LIST $F_LVS_LIST)
 
             local f=''
             for f in $meta_files; do
@@ -3467,9 +3461,7 @@ _filter_params_x() { #{{{
     };_ #}}}
 
     _(){ #{{{
-        if [[ -d $SRC && $IS_LVM == true ]]; then
-            VG_SRC_NAME=$(gawk '{print $2}' "$SRC/$F_PVS_LIST" | sort -u)
-        else
+        if [[ ! -d $SRC || $IS_LVM == false ]]; then
             #Follwing algorithm is a safe-gurad in case there are multiple VGs with similar names.
             #For instance 'vg00' and 'vg00-1'. This is something that might not happen in real world
             #setups, but it will during automated tests!
@@ -3496,11 +3488,7 @@ _filter_params_x() { #{{{
     };_ #}}}
 
     _(){ #{{{
-        if [[ -z $VG_SRC_NAME ]]; then
-            while read -r e g; do
-                grep -q ${SRC##*/} < <(dmsetup deps -o devname | sort -u | sed 's/.*(\(\w*\).*/\1/g') && VG_SRC_NAME=$g
-            done < <(if [[ -d $SRC ]]; then cat "$SRC/$F_PVS_LIST"; else pvs --noheadings -o pv_name,vg_name; fi)
-        else
+        if [[ -n $VG_SRC_NAME ]]; then
             vg_disks "$VG_SRC_NAME" "VG_DISKS" && IS_LVM=true
             if [[ -b $SRC ]] && grep -q 'LVM2_member' < <(lsblk -lpo fstype $SRC); then
                 grep -q lvm < <(lsblk -lpo type $SRC) || exit_ 1 "Found LVM, but LVs have not been activated. Did you forget to run 'vgchange -ay $VG_SRC_NAME' ?"
