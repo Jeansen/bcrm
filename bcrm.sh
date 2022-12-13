@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=0f6323e
+declare VERSION=91d2e34
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -802,7 +802,7 @@ set_dest_uuids() { #{{{
     }
 
     _update_order() {
-        local order=($(lsblk -lnpo uuid $DEST))
+        local order=($(lsblk -no uuid,name $DEST | gawk '{print $1}'))
         local e=''
         for e in "${!order[@]}"; do
             [[ ${order[$e]} == $1 ]] && DESTS_ORDER["$e"]="$1"
@@ -854,7 +854,7 @@ init_srcs() { #{{{
     local srcs_order_selected=()
 
     _update_order() {
-        local order=($(lsblk -lnpo uuid $SRC))
+        local order=($(lsblk -no uuid,name $SRC | gawk '{print $1}'))
         local e=''
         for e in "${!order[@]}"; do
             [[ ${order[$e]} == $1 ]] && SRCS_ORDER["$e"]="$1"
@@ -869,7 +869,7 @@ init_srcs() { #{{{
             eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
             add_device_links "$KNAME"
-            if [[ $ALL_TO_LVM == true && $FSTYPE == swap ]]; then
+            if [[ $ALL_TO_LVM == true && $FSTYPE == swap && $TYPE == part ]]; then
                 size=$(to_kbyte $SIZE)
                 TO_LVM[$NAME]="swap:${size}:${FSTYPE}"
                 continue;
@@ -931,13 +931,14 @@ init_srcs() { #{{{
 # $3: "<packages to install>"
 grub_install() { #{{{
     logmsg "grub_install"
-    chroot "$1" bash -c "
-        debconf-set-selections <<< 'grub-pc grub-pc/install_devices multiselect $2'
-        DEBIAN_FRONTEND=noninteractive apt-get install -y $3 &&
-        grub-install $2 &&
-        update-grub &&
-        update-initramfs -u -k all" || return 1
-
+    chroot "$1" bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y $3
+    if [[ $HAS_EFI ]]; then
+        grub-install $2 --target=x86_64-efi --efi-directory=/boot/efi
+    else
+        grub-install $2
+    fi
+    update-initramfs -u -k all
+    update-grub" &> /dev/null
 } #}}}
 
 # $1: <mount point>
@@ -2077,7 +2078,7 @@ Clone() { #{{{
 
             local d=''
             for d in ${DEVICE_MAP[$part]}; do
-                if echo "$lvm_data" | grep -q "$d\|$part"; then
+                if [[ $lvm_data =~ $d|$part ]]; then
                     local name size
                     read -r name size <<<$(echo "$lvm_data" | grep "$d\|$part" | gawk '{print $1, $3}')
                     local part_size_src=${size%%.*}
@@ -2091,6 +2092,7 @@ Clone() { #{{{
                         lvcreate --yes -L$part_size_dest -n "$name" "$VG_SRC_NAME_CLONE"
                         created+=($name)
                     fi
+                    break
                 fi
             done
 
@@ -2184,34 +2186,45 @@ Clone() { #{{{
         #TODO rework this and the next block. Currently there are two stage, LVM and ALL_TO_LVM using SRC
         #SWAP is excluded from LVM conversion, too
         _(){ #{{{
+            local -A lvm_data_map
             local lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path e size
+
             while read -r e; do
                 read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"$e"
-                lv_size=${lv_size%%.*}
-                if [[ $vg_name == "$VG_SRC_NAME" && -n $VG_SRC_NAME ]]; then
-                    for c in ${created[@]}; do
-                        [[ $c == $lv_name ]] && continue 2
-                    done
+                lvm_data_map[$lv_dm_path]="$e"
+            done < <(echo "$lvm_data")
 
-                    [[ $lv_dm_path == "$SWAP_PART" ]] && continue
-                    (( ${LVM_EXPAND_BY[$lv_name]:-0} >0 )) && expands[$lv_name]="$lv_size" && continue
-                    [[ $lv_role =~ snapshot ]] && continue
+            for k in ${SRCS_ORDER[@]}; do
+                IFS=: read -r sdev rest <<<${SRCS[$k]}
+                if [[ ${lvm_data_map[$sdev]// } ]]; then
+                    unset lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path
+                    read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"${lvm_data_map[$sdev]}"
+                    lv_size=${lv_size%%.*}
+                    if [[ $vg_name == "$VG_SRC_NAME" && -n $VG_SRC_NAME ]]; then
+                        for c in ${created[@]}; do
+                            [[ $c == $lv_name ]] && continue 2
+                        done
 
-                    if (( ${LVM_SIZE_TO[$lv_name]:-0} >0 )); then
-                        lvcreate --yes -L"${LVM_SIZE_TO[$lv_name]}" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
-                    elif ((s1 < s2)); then
-                        lvcreate --yes -L"$lv_size" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
-                    else
-                        size=$(echo "scale=0; $lv_size * $scale_factor / 1" | bc)
-                        lvcreate --yes -L$size -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
+                        [[ $lv_dm_path == "$SWAP_PART" ]] && continue
+                        (( ${LVM_EXPAND_BY[$lv_name]:-0} >0 )) && expands[$lv_name]="$lv_size" && continue
+                        [[ $lv_role =~ snapshot ]] && continue
+
+                        if (( ${LVM_SIZE_TO[$lv_name]:-0} >0 )); then
+                            lvcreate --yes -L"${LVM_SIZE_TO[$lv_name]}" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
+                        elif ((s1 < s2)); then
+                            lvcreate --yes -L"$lv_size" -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
+                        else
+                            size=$(echo "scale=0; $lv_size * $scale_factor / 1" | bc)
+                            lvcreate --yes -L$size -n "$lv_name" "$VG_SRC_NAME_CLONE" || exit_ 1 "LV creation of $lv_name failed."
+                        fi
                     fi
                 fi
-            done < <(echo "$lvm_data")
+            done
         };_ #}}}
 
         _(){ #{{{
             local f sname fs spid ptype type mp used size lsize
-            for f in "${!SRCS[@]}"; do
+            for f in "${SRCS_ORDER[@]}"; do
                 IFS=: read -r sname fs spid ptype type mp used size <<<"${SRCS[$f]}"
 
                 local vg_free=$( vgs --noheadings --units m --nosuffix -o vg_name,vg_free \
@@ -3473,7 +3486,7 @@ _filter_params_x() { #{{{
             for v in ${vgs[@]}; do
                 for s in ${src_vgs[@]}; do
                     #Store all VGs that match to a LV name including its lengths.
-                    grep -q $v < <(echo $s) && vgs_set[$v]=${#v};
+                    grep -q ${v//-/--} < <(echo $s) && vgs_set[$v]=${#v};
                 done;
             done
 
