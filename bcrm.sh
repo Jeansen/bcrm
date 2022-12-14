@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=91d2e34
+declare VERSION=6e0decf
 declare -r LOG_PATH="$(mktemp -d)"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -933,9 +933,9 @@ grub_install() { #{{{
     logmsg "grub_install"
     chroot "$1" bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y $3
     if [[ $HAS_EFI ]]; then
-        grub-install $2 --target=x86_64-efi --efi-directory=/boot/efi
+        grub-install --recheck --target=x86_64-efi --efi-directory=/boot/efi $2 
     else
-        grub-install $2
+        grub-install --recheck $2
     fi
     update-initramfs -u -k all
     update-grub" &> /dev/null
@@ -3389,6 +3389,24 @@ _filter_params_x() { #{{{
                 grep "^$part/*\$" -q < <(lsblk -lnpo name "$DEST") && exit_ 2 "Cannot include partition ${part}. It is part of the destination device ${DEST}."
             fi
         done
+    };_ #}}}
+
+    _(){ #{{{
+        local name type 
+        [[ $(lsblk -rno type) =~ crypt ]] && message -I -i -t "Destination $DEST has active LUKS partition(s). Continue anyway and close them? [y/N]: "
+        read -r choice
+        while read -r name type; do
+            if [[ $YES == false ]]; then
+                if [[ $choice =~ Y|y|Yes|yes ]]; then
+                    cryptsetup close "$name" || exit_ 9 "Could not close LUKS: $name"
+                else
+                    exit_ 1
+                fi
+            else
+                cryptsetup close "$name" || exit_ 9 "Could not close LUKS: $name"
+            fi
+        done <<<$(lsblk -rnpo name,type | grep 'crypt')
+
     };_ #}}}
 
     [[ $PVALL == true && -n $ENCRYPT_PWD ]] && exit_ 1 "Encryption only supported for simple LVM setups with a single PV!"
