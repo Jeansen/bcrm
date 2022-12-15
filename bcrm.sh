@@ -28,8 +28,8 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=6e0decf
-declare -r LOG_PATH="$(mktemp -d)"
+declare VERSION=d7e9a6c
+declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
 declare -r F_SCHROOT_CONFIG='/etc/schroot/chroot.d/bcrm'
@@ -938,7 +938,7 @@ grub_install() { #{{{
         grub-install --recheck $2
     fi
     update-initramfs -u -k all
-    update-grub" &> /dev/null
+    update-grub" &>> $F_LOG
 } #}}}
 
 # $1: <mount point>
@@ -1738,10 +1738,6 @@ fsunfreeze() { #{{{
 
 Cleanup() { #{{{
     {
-        message -i -t "Saving active logfile to: $LOG_PATH_ON_DISK"
-        mkdir -p $LOG_PATH_ON_DISK
-        cp -r ${LOG_PATH}/* ${LOG_PATH_ON_DISK}
-
         logmsg "Cleanup"
         unfreeze
         if [[ $IS_CLEANUP == true ]]; then
@@ -1766,6 +1762,11 @@ Cleanup() { #{{{
             message -i -t "Re-enabling previously deactived power management settings."
         fi
         lvremove -f "${VG_SRC_NAME}/$SNAP4CLONE" &>/dev/null
+
+        message -i -t "Saving active logfile to: $LOG_PATH_ON_DISK"
+        mkdir -p $LOG_PATH_ON_DISK
+        cp -r ${LOG_PATH}/* ${LOG_PATH_ON_DISK}
+
         rm "$FIFO"
         flock -u 200
     } &>/dev/null
@@ -2725,7 +2726,7 @@ Main() { #{{{
         [[ -s $SCRIPTPATH/$F_SCHROOT ]] || exit_ 2 "Cannot run schroot because the archive containing it - $F_SCHROOT - is missing."
         [[ -n $(ls -A "$SCHROOT_HOME") ]] && exit_ 2 "Schroot home not empty!"
 
-        echo_ "Creating chroot environment. This might take a while ..."
+        echo "Creating chroot environment. This might take a while ..."
         { mkdir -p "$SCHROOT_HOME" && tar xf "${SCRIPTPATH}/$F_SCHROOT" -C "$_"; } \
             || exit_ 1 "Faild extracting chroot. See the log $F_LOG for details."
 
@@ -2751,7 +2752,7 @@ Main() { #{{{
         "))" | sed -e '/./,$!d; s/^\s*//' >$F_SCHROOT_CONFIG
 
         cp -r $(dirname $(readlink -f $0)) "$SCHROOT_HOME"
-        echo_ "Now executing chroot in $SCHROOT_HOME"
+        echo "Now executing chroot in $SCHROOT_HOME"
         rm "$PIDFILE" && schroot -c bcrm -d /sf_bcrm -- bcrm.sh ${args//--schroot/} #Do not double quote args to avoid wrong interpretation!
 
         umount_chroot
@@ -2997,8 +2998,9 @@ _filter_params_x() { #{{{
     #Force root
     [[ $(id -u) -ne 0 ]] && exec sudo "$0" "$@"
 
+    # mount_ tmpfs -t tmpfs -o size=10m -p $LOG_PATH || exit_ 1 "ERROR: Could not mount file system for logfiles."
+    mkdir -p $LOG_PATH || exit_ 1 "ERROR: Could not create $LOG_PATH"
     message -i -t "Active log path: $LOG_PATH"
-    mount_ tmpfs -t tmpfs -o size=10m -p $LOG_PATH || exit_ 1 "ERROR: Could not mount file system for logfiles."
 
     echo >"$F_LOG"
 
@@ -3037,7 +3039,7 @@ _filter_params_x() { #{{{
                 show_usage
                 ;;
             '-v' | '--version')
-                echo_ "$VERSION"
+                echo "$VERSION"
                 exit_ 0
                 ;;
             '-y' | '--yes')
@@ -3347,26 +3349,6 @@ _filter_params_x() { #{{{
     fi
 
     _(){ #{{{
-        if [[ -b $DEST ]]; then
-            local pv_name='' vg_name=''
-            read -r pv_name vg_name < <(pvs -o pv_name,vg_name --no-headings | grep "$DEST")
-            if [[ -n $vg_name ]]; then
-                message -I -i -t "Destination has physical volumes still assigned. Delete ${vg_name}? [y/N]: "
-                if [[ $YES == false ]]; then
-                    read -r choice
-                    if [[ $choice =~ Y|y|Yes|yes ]]; then
-                        vgremove -y "$vg_name"
-                    else
-                        exit_ 1
-                    fi
-                else
-                    vgremove -y "$vg_name"
-                fi
-            fi
-        fi
-    };_ #}}}
-
-    _(){ #{{{
         local d=''
         for d in "$SRC" "$DEST"; do
             [[ -b $d ]] && _validate_block_device $d
@@ -3392,21 +3374,48 @@ _filter_params_x() { #{{{
     };_ #}}}
 
     _(){ #{{{
-        local name type 
-        [[ $(lsblk -rno type) =~ crypt ]] && message -I -i -t "Destination $DEST has active LUKS partition(s). Continue anyway and close them? [y/N]: "
-        read -r choice
-        while read -r name type; do
-            if [[ $YES == false ]]; then
-                if [[ $choice =~ Y|y|Yes|yes ]]; then
-                    cryptsetup close "$name" || exit_ 9 "Could not close LUKS: $name"
-                else
-                    exit_ 1
-                fi
-            else
-                cryptsetup close "$name" || exit_ 9 "Could not close LUKS: $name"
-            fi
-        done <<<$(lsblk -rnpo name,type | grep 'crypt')
+		_pv_check(){ #{{{
+			if [[ -b $1 ]]; then
+				local pv_name='' vg_name='' choice=''
+				read -r pv_name vg_name < <(pvs -o pv_name,vg_name --no-headings | grep "$1")
+				if [[ -n $vg_name ]]; then
+					message -I -i -t "Destination has physical volumes still assigned. Delete ${vg_name}? [y/N]: "
+					if [[ $YES == false ]]; then
+						read -r choice
+						if [[ $choice =~ Y|y|Yes|yes ]]; then
+							vgremove -y "$vg_name"
+						else
+							return 1
+						fi
+					else
+						vgremove -y "$vg_name"
+					fi
+				fi
+			fi
+			return 0
+		}; #}}}
 
+        local name type choice=''
+        if [[ $(lsblk -rno type $DEST) =~ crypt ]]; then
+			message -I -i -t "Destination $DEST has active LUKS partition(s). Continue anyway and close them? [y/N]: "
+			read -r choice
+
+			mapfile -t  crypt_map <<<"$(lsblk -rnpo name,type | grep 'crypt' | gawk '{print $1}')"
+			for name in ${crypt_map[@]}; do
+				if [[ $YES == false ]]; then
+					if [[ $choice =~ Y|y|Yes|yes ]]; then
+						_pv_check $name || exit_ 1
+						cryptsetup close "$name" || exit_ 9 "Could not close LUKS: $name"
+					else
+						exit_ 1
+					fi
+				else
+					cryptsetup close "$name" || exit_ 9 "Could not close LUKS: $name"
+				fi
+			done
+		else
+			_pv_check $DEST
+		fi
     };_ #}}}
 
     [[ $PVALL == true && -n $ENCRYPT_PWD ]] && exit_ 1 "Encryption only supported for simple LVM setups with a single PV!"
