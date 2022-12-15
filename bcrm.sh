@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=ebc3cb5
+declare VERSION=d554b7d
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -3388,6 +3388,7 @@ _filter_params_x() { #{{{
 							return 1
 						fi
 					else
+                        echo_ "yes"
 						vgremove -y "$vg_name"
 					fi
 				fi
@@ -3410,6 +3411,7 @@ _filter_params_x() { #{{{
 						exit_ 1
 					fi
 				else
+                    echo_ "yes"
 					cryptsetup close "$name" || exit_ 9 "Could not close LUKS: $name"
 				fi
 			done
