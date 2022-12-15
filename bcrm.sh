@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=d7e9a6c
+declare VERSION=ebc3cb5
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -49,7 +49,7 @@ declare -r BACKUP_FOLDER=/var/bcrm/backup
 declare -r SCRIPTNAME=$(basename "$0")
 declare -r SCRIPTPATH=$(dirname "$0")
 declare -r PIDFILE="/var/run/$SCRIPTNAME"
-declare -r ROOT_DISK=$(lsblk -lpo pkname,mountpoint | grep '\s/$' | gawk '{print $1}')
+declare -r ROOT_DISK=$(lsblk -rpo pkname,mountpoint | grep '\s/$' | cut -d  ' ' -f1)
 declare -r SRC_NBD=/dev/nbd0
 declare -r DEST_NBD=/dev/nbd1
 declare -r CLONE_DATE=$(date '+%d%m%y')
