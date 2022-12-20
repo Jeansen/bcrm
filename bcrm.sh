@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=ac37b99
+declare VERSION=41ab3ff
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -2064,10 +2064,13 @@ Clone() { #{{{
         [[ $PVALL == true ]] && vg_extend "$VG_SRC_NAME_CLONE" "$SRC" "$DEST"
 
         local lvs_cmd='lvs --noheadings --units m --nosuffix -o lv_name,vg_name,lv_size,vg_size,vg_free,lv_active,lv_role,lv_dm_path'
-        local lvm_data=$({ [[ $_RMODE == true ]] && cat "$SRC/$F_LVS_LIST" || $lvs_cmd; } | grep -E "\b$VG_SRC_NAME\b")
 
-        local vg_data=$(vgs --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free | grep -E "\b$VG_SRC_NAME\b|\b$VG_SRC_NAME_CLONE\b")
-        [[ $_RMODE == true && $ALL_TO_LVM == false ]] &&  vg_data=$(echo -e "$vg_data\n$(cat $SRC/$F_VGS_LIST)")
+        if [[ $_RMODE == true && $ALL_TO_LVM == false ]]; then
+            local lvm_data=$({ cat "$SRC/$F_LVS_LIST" || $lvs_cmd; } | grep -E "\b$VG_SRC_NAME\b")
+            local vg_data=$(echo -e "$vg_data\n$(cat $SRC/$F_VGS_LIST)")
+        else
+            local vg_data=$(vgs --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free | grep -E "\b$VG_SRC_NAME\b|\b$VG_SRC_NAME_CLONE\b")
+        fi
 
         local -i fixd_size_dest=0
         local -i fixd_size_src=0
@@ -2501,7 +2504,6 @@ Clone() { #{{{
         )
 
         local s=''
-        declare -p SRCS_ORDER DESTS_ORDER SRCS DESTS
         for s in "${SRCS_ORDER[@]}"; do
             local sdev='' sfs='' spid='' sptype='' stype='' mountpoint='' sused='' ssize=''
             IFS=: read -r sdev sfs spid sptype stype mountpoint sused ssize <<<${SRCS[$s]}
@@ -2530,13 +2532,13 @@ Clone() { #{{{
 
             ((davail - sused <= 0)) && exit_ 10 "Require $(to_readable_size ${sused}K) but $ddev is only $(to_readable_size ${davail}K)"
 
-            if [[ -s $smpnt/etc/fstab ]] && gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
-                (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt
-            fi
+            # if [[ -s $smpnt/etc/fstab ]] && gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
+            #     (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt
+            # fi
 
             _copy "$sdev" "$ddev" "$smpnt" "$dmpnt"
 
-            (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $dmpnt -u
+            # (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $dmpnt -u
 
             _(){ #{{{
                 local em=''
