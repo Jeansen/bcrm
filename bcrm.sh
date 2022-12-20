@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=d554b7d
+declare VERSION=ac37b99
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -802,7 +802,7 @@ set_dest_uuids() { #{{{
     }
 
     _update_order() {
-        local order=($(lsblk -no uuid,name $DEST | gawk '{print $1}'))
+        local order=($(lsblk -lno uuid,name $DEST | gawk '{print $1}'))
         local e=''
         for e in "${!order[@]}"; do
             [[ ${order[$e]} == $1 ]] && DESTS_ORDER["$e"]="$1"
@@ -854,7 +854,7 @@ init_srcs() { #{{{
     local srcs_order_selected=()
 
     _update_order() {
-        local order=($(lsblk -no uuid,name $SRC | gawk '{print $1}'))
+        local order=($(lsblk -lno uuid,name $SRC | gawk '{print $1}'))
         local e=''
         for e in "${!order[@]}"; do
             [[ ${order[$e]} == $1 ]] && SRCS_ORDER["$e"]="$1"
@@ -2190,6 +2190,7 @@ Clone() { #{{{
             local -A lvm_data_map
             local lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path e size
 
+            [[ -z ${lvm_data// } ]] && return #In case there is no LVM in SRC (when using all-to-lvm)
             while read -r e; do
                 read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"$e"
                 lvm_data_map[$lv_dm_path]="$e"
@@ -2500,6 +2501,7 @@ Clone() { #{{{
         )
 
         local s=''
+        declare -p SRCS_ORDER DESTS_ORDER SRCS DESTS
         for s in "${SRCS_ORDER[@]}"; do
             local sdev='' sfs='' spid='' sptype='' stype='' mountpoint='' sused='' ssize=''
             IFS=: read -r sdev sfs spid sptype stype mountpoint sused ssize <<<${SRCS[$s]}
