@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=116d558
+declare VERSION=4d132bf
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -933,7 +933,7 @@ grub_install() { #{{{
     logmsg "grub_install"
     chroot "$1" bash -c "debconf-set-selections <<< 'grub-pc grub-pc/install_devices multiselect $2'
     DEBIAN_FRONTEND=noninteractive apt-get install -y $3
-    if [[ $HAS_EFI ]]; then
+    if [[ $HAS_EFI == true ]]; then
         grub-install --recheck --target=x86_64-efi --efi-directory=/boot/efi $2 
     else
         grub-install --recheck $2
