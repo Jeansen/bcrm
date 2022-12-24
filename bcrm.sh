@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=15a3479
+declare VERSION=35847d2
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -1982,14 +1982,9 @@ To_file() { #{{{
             spid=${spid// }
             local file="${g}.${sid// }.${spid// }.${fs// }.${type// }.${used}.${sdev//\//_}.${mount//\//_}"
 
-            _(){ #{{{
-                if [[ -s $mpnt/etc/fstab ]]; then
-                    local f=''
-                    for f in */$mpnt; do
-                        du -sb "$f" >> $F_ROOT_FOLDER_DU
-                    done
-                fi
-            };_ #}}}
+            if [[ -s $mpnt/etc/fstab ]]; then
+                du -sb "$mpnt" > $F_ROOT_FOLDER_DU
+            fi
 
             _copy "$sdev" $mpnt "$file"
 
@@ -2064,9 +2059,9 @@ Clone() { #{{{
         vgcreate "$VG_SRC_NAME_CLONE" $(pvs --noheadings -o pv_name | grep "$dest" | tr -d ' ')
         [[ $PVALL == true ]] && vg_extend "$VG_SRC_NAME_CLONE" "$SRC" "$DEST"
 
-        local lvs_cmd='lvs --noheadings --units m --nosuffix -o lv_name,vg_name,lv_size,vg_size,vg_free,lv_active,lv_role,lv_dm_path'
+        local lvs_cmd='lvs --separator ':' --noheadings --units m --nosuffix -o lv_name,vg_name,lv_size,vg_size,vg_free,lv_active,lv_role,lv_dm_path'
         local lvm_data=$({ [[ $_RMODE == true ]] && cat "$SRC/$F_LVS_LIST" || $lvs_cmd; } | grep -E "\b$VG_SRC_NAME\b")
-        local vg_data=$(vgs --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free | grep -E "\b$VG_SRC_NAME\b|\b$VG_SRC_NAME_CLONE\b")
+        local vg_data=$(vgs --separator ':' --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free | grep -E "\b$VG_SRC_NAME\b|\b$VG_SRC_NAME_CLONE\b")
         [[ $_RMODE == true ]] &&  vg_data=$(echo -e "$vg_data\n$(cat $SRC/$F_VGS_LIST)")
 
 
@@ -2082,7 +2077,7 @@ Clone() { #{{{
             for d in ${DEVICE_MAP[$part]}; do
                 if [[ $lvm_data =~ $d|$part ]]; then
                     local name size
-                    read -r name size <<<$(echo "$lvm_data" | grep "$d\|$part" | gawk '{print $1, $3}')
+                    IFS=: read -r name size <<<$(echo "$lvm_data" | grep "$d\|$part" | gawk '{print $1, $3}')
                     local part_size_src=${size%%.*}
                     local part_size_dest=${size%%.*}
 
@@ -2141,7 +2136,7 @@ Clone() { #{{{
             local e=''
             while read -r e; do
                 local vg_name='' vg_size='' vg_free='' src_vg_free=''
-                read -r vg_name vg_size vg_free <<<"$e"
+                IFS=: read -r vg_name vg_size vg_free <<<"$e"
                 [[ $vg_name == "$VG_SRC_NAME" ]] && s1=$((${vg_size%%.*} - ${vg_free%%.*} - $fixd_size_src)) && src_vg_free=${vg_free%%.*}
                 [[ $vg_name == "$VG_SRC_NAME_CLONE" ]] && s2=$((${vg_free%%.*} - $fixd_size_dest - $VG_FREE_SIZE))
             done < <(echo "$vg_data")
@@ -2165,7 +2160,7 @@ Clone() { #{{{
                 local e=''
                 while read -r e; do
                     local vg_name='' vg_size='' vg_free=''
-                    read -r vg_name vg_size vg_free <<<"$e"
+                    IFS=: read -r vg_name vg_size vg_free <<<"$e"
                     [[ $vg_name == "$VG_SRC_NAME_CLONE" ]] && s2=$((${vg_free%%.*} - $fixd_size_dest - $VG_FREE_SIZE))
                 done < <(echo "$vg_data")
 
@@ -2193,7 +2188,7 @@ Clone() { #{{{
 
             [[ -z ${lvm_data// } ]] && return #In case there is no LVM in SRC (when using all-to-lvm)
             while read -r e; do
-                read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"$e"
+                IFS=: read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"$e"
                 lvm_data_map[$lv_dm_path]="$e"
             done < <(echo "$lvm_data")
 
