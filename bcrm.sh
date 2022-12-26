@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=35847d2
+declare VERSION=960bac4
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -1812,15 +1812,15 @@ To_file() { #{{{
         [[ -z $snp ]] && snp="NOSNAPSHOT"
 
         if [[ $IS_LVM == true ]]; then
-            vgs --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free,lv_active \
+            vgs --separator ':' --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free,lv_active \
                 | grep 'active$' \
                 | sed -e 's/active$//;s/^\s*//' \
                 | uniq \
                 | grep -E "\b$VG_SRC_NAME\b" >$F_VGS_LIST
 
-            lvs --noheadings --units m --nosuffix -o lv_name,vg_name,lv_size,vg_size,vg_free,lv_active,lv_role,lv_dm_path \
+            lvs --separator ':' --noheadings --units m --nosuffix -o lv_name,vg_name,lv_size,vg_size,vg_free,lv_active,lv_role,lv_dm_path \
                 | grep -v 'snap' \
-                | grep 'active public.*' \
+                | grep 'active:public.*' \
                 | sed -e 's/^\s*//; s/\s*$//' \
                 | grep -E "\b$VG_SRC_NAME\b"  >$F_LVS_LIST
         fi
@@ -2064,7 +2064,6 @@ Clone() { #{{{
         local vg_data=$(vgs --separator ':' --noheadings --units m --nosuffix -o vg_name,vg_size,vg_free | grep -E "\b$VG_SRC_NAME\b|\b$VG_SRC_NAME_CLONE\b")
         [[ $_RMODE == true ]] &&  vg_data=$(echo -e "$vg_data\n$(cat $SRC/$F_VGS_LIST)")
 
-
         local -i fixd_size_dest=0
         local -i fixd_size_src=0
         local created=()
@@ -2077,7 +2076,7 @@ Clone() { #{{{
             for d in ${DEVICE_MAP[$part]}; do
                 if [[ $lvm_data =~ $d|$part ]]; then
                     local name size
-                    IFS=: read -r name size <<<$(echo "$lvm_data" | grep "$d\|$part" | gawk '{print $1, $3}')
+                    read -r name size <<<$(echo "$lvm_data" | grep "$d\|$part" | gawk -F: '{print $1, $3}')
                     local part_size_src=${size%%.*}
                     local part_size_dest=${size%%.*}
 
@@ -2196,7 +2195,7 @@ Clone() { #{{{
                 IFS=: read -r sdev rest <<<${SRCS[$k]}
                 if [[ ${lvm_data_map[$sdev]// } ]]; then
                     unset lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path
-                    read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"${lvm_data_map[$sdev]}"
+                    IFS=: read -r lv_name vg_name lv_size vg_size vg_free lv_active lv_role lv_dm_path <<<"${lvm_data_map[$sdev]}"
                     lv_size=${lv_size%%.*}
                     if [[ $vg_name == "$VG_SRC_NAME" && -n $VG_SRC_NAME ]]; then
                         for c in ${created[@]}; do
@@ -2690,7 +2689,7 @@ Main() { #{{{
         local vg_name="$2"
 
         if [[ $_RMODE == true ]]; then
-            grep -qw "$lv_name" < <(gawk '{print $1}' "$SRC/$F_LVS_LIST" | sort -u)
+            grep -qw "$lv_name" < <(gawk -F: '{print $1}' "$SRC/$F_LVS_LIST" | sort -u)
         else
             lvs --noheadings -o lv_name,vg_name | grep -w "$vg_name" | grep -qw "$1"
         fi
