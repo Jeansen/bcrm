@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=960bac4
+declare VERSION=409e47f
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -512,7 +512,7 @@ mount_exta_lvm() { #{{{
             [[ -z $uuid ]] && exit_ 1 "Missing UUID for $name [$path]"
             printf "%s\t%s\t%s\terrors=remount-ro\t0\t1\n" "UUID=$uuid" "$l" "$fs" >> "$dmpnt/etc/fstab"
         elif [[ -n $path && -n $fs ]]; then
-            #[[ -n $smpnt && -n $dmpnt ]] && rsync -av -f"+ $l" -f"- *" "$smpnt/$l" "$dmpnt"
+            [[ -n $smpnt && -n $dmpnt ]] && rsync -av -f"+ $l" -f"- *" "$smpnt/$l" "$dmpnt"
             [[ $create == true ]] && mkdir -p "$dmpnt/$l"
             mount_ "$path" -p "$dmpnt/$l"
         fi
@@ -2119,13 +2119,14 @@ Clone() { #{{{
             for l in ${!TO_LVM[@]}; do
                 if [[ -d $l ]]; then
                     IFS=: read -r lv_name size fs <<<"${TO_LVM[$l]}"
-                    local size=$(to_mbyte $size)
-                    local part_size_src=${size%%.*}
+                    local size=$(to_mbyte ${size}k)
                     local part_size_dest=${size%%.*}
 
                     if [[ $part_size_dest -gt 0 ]]; then
                         fixd_size_dest+=$part_size_dest
                         lvcreate --yes -L$part_size_dest -n $lv_name "$VG_SRC_NAME_CLONE"
+                    else
+                        exit_ 1 "Cannot create LV for fodler $l. Missing size!"
                     fi
                 fi
             done
@@ -2524,13 +2525,13 @@ Clone() { #{{{
 
             ((davail - sused <= 0)) && exit_ 10 "Require $(to_readable_size ${sused}K) but $ddev is only $(to_readable_size ${davail}K)"
 
-            # if [[ -s $smpnt/etc/fstab ]] && gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
-            #     (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt
-            # fi
+            if [[ -s $smpnt/etc/fstab ]] && gawk '/^[^#]/{if( $2 =="/" ) {exit 0} else {exit 1}}' $smpnt/etc/fstab; then
+                (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -s $smpnt -d $dmpnt
+            fi
 
             _copy "$sdev" "$ddev" "$smpnt" "$dmpnt"
 
-            # (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $dmpnt -u
+            (( ${#TO_LVM[@]} > 0 )) && mount_exta_lvm -d $dmpnt -u
 
             _(){ #{{{
                 local em=''
