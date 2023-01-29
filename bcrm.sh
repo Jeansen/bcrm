@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=409e47f
+declare VERSION=a0bab98
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -1117,10 +1117,16 @@ expand_disk() { #{{{
     _size() { #{{{
         local part="$1"
         local part_size="$2"
+
         #Substract the swap partition size
-        [[ $part_size -le 0 ]] && part_size=$(echo "$pdata" | grep "$part" | sed -E 's/.*size=\s*([0-9]*).*/\1/')
-        src_size=$((src_size - part_size))
-        dest_size=$((dest_size - part_size))
+        local src_part_size=$(echo "$pdata" | grep "$part" | sed -E 's/.*size=\s*([0-9]*).*/\1/')
+        src_size=$((src_size - src_part_size))
+        if [[ $part_size -le 0 ]]; then
+            dest_size=$((dest_size - src_part_size))
+        else
+            part_size=$(to_sector ${part_size}K)
+            dest_size=$((dest_size - part_size))
+        fi
     } #}}}
 
     [[ -n $SWAP_PART  ]] && _size "$SWAP_PART" "$SWAP_SIZE"
