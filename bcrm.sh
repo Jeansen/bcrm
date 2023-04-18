@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=a0bab98
+declare VERSION=a29272a
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -695,7 +695,7 @@ vg_disks() { #{{{
 
 add_device_links() { #{{{
     local kdev=$1
-    local devlinks=$(find /dev -type l -exec readlink -nf {} \; -exec echo " {}" ';' | grep "$kdev" | gawk '{print $2}')
+    local devlinks=$(find /dev -type l -exec readlink -nf {} \; -exec echo " {}" ';' | grep -w "$kdev" | gawk '{print $2}')
     DEVICE_MAP[$kdev]="$devlinks"
 
     local d=''
@@ -854,10 +854,12 @@ init_srcs() { #{{{
     local srcs_order_selected=()
 
     _update_order() {
-        local order=($(lsblk -lno uuid,name $SRC | gawk '{print $1}'))
+        local order=()
         local e=''
+
+        mapfile -d ' ' order < <(lsblk -lno uuid,name $SRC | gawk '{print $1}')
         for e in "${!order[@]}"; do
-            [[ ${order[$e]} == $1 ]] && SRCS_ORDER["$e"]="$1"
+            [[ ${order[$e]} == "$1" ]] && SRCS_ORDER["$e"]="$1" && continue #snapshots get the same UUID. Continue to avoid duplicate entries!
         done
     }
 
@@ -868,7 +870,7 @@ init_srcs() { #{{{
             read -r name kdev fstype uuid puuid type parttype mountpoint size <<<"$e"
             eval local "$name" "$kdev" "$fstype" "$uuid" "$puuid" "$type" "$parttype" "$mountpoint" "$size"
 
-            add_device_links "$KNAME"
+            [[ $_RMODE == false ]] && add_device_links "$KNAME"
             if [[ $ALL_TO_LVM == true && $FSTYPE == swap && $TYPE == part ]]; then
                 size=$(to_kbyte $SIZE)
                 TO_LVM[$NAME]="swap:${size}:${FSTYPE}"
@@ -877,10 +879,11 @@ init_srcs() { #{{{
             elif [[ $FSTYPE == swap ]]; then continue; fi
 
             #Filter all we don't want
-            { lvs -o lv_dmpath,lv_role | grep "$NAME" | grep "snapshot" -q || [[ $NAME =~ real$|cow$ ]]; } && continue
+            [[ $NAME =~ real$|cow$ ]] && continue
 
             if [[ $_RMODE == false ]]; then
                 local mp=''
+                { lvs -o lv_dmpath,lv_role | grep "$NAME" | grep "snapshot" -q; } && continue
                 [[ -z ${MOUNTPOINT// } ]] && mp="$NAME" || mp="$MOUNTPOINT"
                 mount_ "$mp" -t "$FSTYPE" || exit_ 1 "Could not mount ${mp}."
 
@@ -896,7 +899,7 @@ init_srcs() { #{{{
                     fi
                 done
                 umount_ "$mp"
-                _update_order "$UUID"
+                _update_order "$UUID" #TODO On backup restore, SRCS_ORDER is read from context
             fi
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
             srcs_order_selected=srcs_order
@@ -1926,12 +1929,7 @@ To_file() { #{{{
             _save_disk_layout
             init_srcs "$($LSBLK_CMD ${VG_DISKS[@]:-$SRC})"
 
-            local k='' av=''
-            for k in "${!DEVICE_MAP[@]}"; do
-                av+="[$k]=\"${DEVICE_MAP[$k]}\" ";
-            done
-
-            echo "DEVICE_MAP=($av)" > $F_DEVICE_MAP
+            declpare -p DEVICE_MAP > $F_DEVICE_MAP
             mounts
         }
         message -y
@@ -3461,6 +3459,7 @@ _filter_params_x() { #{{{
     #Load context
     if [[ -d "$SRC" && -e "$SRC/$F_CONTEXT" ]]; then
         eval "$(cat $SRC/$F_CONTEXT)"
+        eval "$(cat $SRC/$F_DEVICE_MAP)"
     fi
 
     [[ $UEFI == true && $SYS_HAS_EFI == false ]] &&
