@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=ba38306
+declare VERSION=4b1cb4b
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -857,7 +857,6 @@ init_srcs() { #{{{
         local order=($(lsblk -lno uuid,name $SRC | gawk '{print $1}'))
         local e=''
 
-        mapfile -d ' ' order < <(lsblk -lno uuid,name $SRC | gawk '{print $1}')
         for e in "${!order[@]}"; do
             [[ ${order[$e]} == "$1" ]] && SRCS_ORDER["$e"]="$1" && continue #snapshots get the same UUID. Continue to avoid duplicate entries!
         done
