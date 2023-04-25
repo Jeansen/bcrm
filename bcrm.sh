@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=a29272a
+declare VERSION=ba38306
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -854,7 +854,7 @@ init_srcs() { #{{{
     local srcs_order_selected=()
 
     _update_order() {
-        local order=()
+        local order=($(lsblk -lno uuid,name $SRC | gawk '{print $1}'))
         local e=''
 
         mapfile -d ' ' order < <(lsblk -lno uuid,name $SRC | gawk '{print $1}')
@@ -902,7 +902,6 @@ init_srcs() { #{{{
                 _update_order "$UUID" #TODO On backup restore, SRCS_ORDER is read from context
             fi
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
-            srcs_order_selected=srcs_order
         done < <(echo "$file" | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member)\"/ {print $1}" | sort -u -b -k1,1)
         SRCS_ORDER=(${SRCS_ORDER[@]})
     };_ #}}}
