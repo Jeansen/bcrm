@@ -28,7 +28,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=4b1cb4b
+declare VERSION=daf0797
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -1927,7 +1927,7 @@ To_file() { #{{{
             _save_disk_layout
             init_srcs "$($LSBLK_CMD ${VG_DISKS[@]:-$SRC})"
 
-            declpare -p DEVICE_MAP > $F_DEVICE_MAP
+            declare -p DEVICE_MAP > $F_DEVICE_MAP
             mounts
         }
         message -y
