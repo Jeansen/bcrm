@@ -2,19 +2,13 @@
 # shellcheck disable=SC2155,SC2153,SC2015,SC2094,SC2016,SC2034
 
 # Copyright (C) 2017-2022 Marcel Lautenbach {{{
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software
+# Foundation, version 3.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License asublished by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 #
-# Thisp rogram is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with thisrogram.  If not, see <http://www.gnu.org/licenses/>.
+# You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
 #}}}
 
 # OPTIONS -------------------------------------------------------------------------------------------------------------{{{
@@ -28,7 +22,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=c1eff1f
+declare VERSION=466360d
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
