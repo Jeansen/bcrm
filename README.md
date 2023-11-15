@@ -1,4 +1,5 @@
 ![](https://rawgit.com/Jeansen/assets/master/project-status.svg)
+[![Codacy Badge](https://api.codacy.com/project/badge/Grade/6a287708fab7492bb1f49a6f904d1c65)](https://app.codacy.com/gh/Jeansen/bcrm?utm_source=github.com&utm_medium=referral&utm_content=Jeansen/bcrm&utm_campaign=Badge_Grade)
 [![](https://rawgit.com/Jeansen/assets/master/license.svg)](LICENSE)
 [![Build Status](https://travis-ci.org/Jeansen/bcrm.svg?branch=master)](https://travis-ci.org/Jeansen/bcrm)
 
