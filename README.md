@@ -1,6 +1,7 @@
 ![](https://rawgit.com/Jeansen/assets/master/project-status.svg)
 [![](https://rawgit.com/Jeansen/assets/master/license.svg)](LICENSE)
-[![Build Status](https://travis-ci.org/Jeansen/bcrm.svg?branch=master)](https://travis-ci.org/Jeansen/bcrm)
+
+[//]: # ([![Build Status]&#40;https://travis-ci.org/Jeansen/bcrm.svg?branch=master&#41;]&#40;https://travis-ci.org/Jeansen/bcrm&#41;)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FJeansen%2Fbcrm.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FJeansen%2Fbcrm?ref=badge_shield)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/8077/badge)](https://www.bestpractices.dev/projects/8077)
 
