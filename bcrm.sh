@@ -22,7 +22,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=bd61127
+declare VERSION=2f6c088
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"

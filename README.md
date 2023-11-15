@@ -134,6 +134,3 @@ Like bcrm? Follow me and/or the repository on GitHub.
 # License
 
 GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
-
-
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FJeansen%2Fbcrm.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FJeansen%2Fbcrm?ref=badge_large)
