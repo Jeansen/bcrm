@@ -1,6 +1,7 @@
 ![](https://rawgit.com/Jeansen/assets/master/project-status.svg)
 [![](https://rawgit.com/Jeansen/assets/master/license.svg)](LICENSE)
 [![Build Status](https://travis-ci.org/Jeansen/bcrm.svg?branch=master)](https://travis-ci.org/Jeansen/bcrm)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FJeansen%2Fbcrm.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FJeansen%2Fbcrm?ref=badge_shield)
 
 
 # Backup, Clone, Restore and More (bcrm)
@@ -131,3 +132,6 @@ Like bcrm? Follow me and/or the repository on GitHub.
 # License
 
 GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
+
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FJeansen%2Fbcrm.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FJeansen%2Fbcrm?ref=badge_large)
