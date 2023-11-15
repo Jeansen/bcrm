@@ -4,7 +4,7 @@
 [//]: # ([![Build Status]&#40;https://travis-ci.org/Jeansen/bcrm.svg?branch=master&#41;]&#40;https://travis-ci.org/Jeansen/bcrm&#41;)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FJeansen%2Fbcrm.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2FJeansen%2Fbcrm?ref=badge_shield)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/8077/badge)](https://www.bestpractices.dev/projects/8077)
-
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/1ee0a3245a3d433e8acfd1c56deea782)](https://app.codacy.com/gh/Jeansen/bcrm/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
 # Backup, Clone, Restore and More (bcrm)
 
