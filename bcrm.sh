@@ -22,7 +22,7 @@ shopt -s globstar
 #}}}
 
 # CONSTANTS -----------------------------------------------------------------------------------------------------------{{{
-declare VERSION=2f6c088
+declare VERSION=67815ea
 declare -r LOG_PATH="/dev/shm/bcrm/"
 declare -r LOG_PATH_ON_DISK='/var/log/bcrm'
 declare -r F_LOG="$LOG_PATH/bcrm.log"
@@ -795,11 +795,20 @@ set_dest_uuids() { #{{{
         return 1
     }
 
+    local order=()
+    local order_lvm=()
     _update_order() {
-        local order=($(lsblk -lno uuid,name $DEST | gawk '{print $1}'))
+        local _order=($(lsblk -lno uuid,type $DEST | awk '{if($2 != "lvm" && $1 != "disk"){print $1}}'))
+        local _order_lvm=($(lsblk -lno uuid,type $DEST | awk '{if($2 == "lvm"){print $1}}'))
+
         local e=''
-        for e in "${!order[@]}"; do
-            [[ ${order[$e]} == $1 ]] && DESTS_ORDER["$e"]="$1"
+        for e in "${!_order[@]}"; do
+            [[ ${_order[$e]} == "$1" ]] && order["$e"]="$1" && continue #snapshots get the same UUID. Continue to avoid duplicate entries!
+        done
+
+        local e=''
+        for e in "${!_order_lvm[@]}"; do
+            [[ ${_order_lvm[$e]} == "$1" ]] && order_lvm["$e"]="$1" && continue #snapshots get the same UUID. Continue to avoid duplicate entries!
         done
     }
 
@@ -826,8 +835,9 @@ set_dest_uuids() { #{{{
         _update_order "$UUID"
 
         # [[ ${PVS[@]} =~ $NAME ]] && continue
-    done < <($LSBLK_CMD "$DEST" $([[ $PVALL == true ]] && echo ${PVS[@]}) | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member|swap)\"/ {print $1}" | sort -u -b -k1,1)
-    DESTS_ORDER=(${DESTS_ORDER[@]})
+    done < <($LSBLK_CMD "$DEST" $([[ $PVALL == true ]] && echo ${PVS[@]}) | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member|swap)\"/ {print \$0}" | sort -u -b -k1,1)
+    DESTS_ORDER=(${order[@]})
+    DESTS_ORDER+=(${order_lvm[@]})
 } #}}}
 
 # $1: partition, e.g. /dev/sda1
@@ -845,14 +855,21 @@ get_uuid() { #{{{
 init_srcs() { #{{{
     logmsg "init_srcs"
     local file="$1"
-    local srcs_order_selected=()
+    local order=()
+    local order_lvm=()
 
     _update_order() {
-        local order=($(lsblk -lno uuid,name $SRC | gawk '{print $1}'))
-        local e=''
+        local _order=($(lsblk -lno uuid,type $SRC | awk '{if($2 != "lvm" && $1 != "disk"){print $1}}'))
+        local _order_lvm=($(lsblk -lno uuid,type $SRC | awk '{if($2 == "lvm"){print $1}}'))
 
-        for e in "${!order[@]}"; do
-            [[ ${order[$e]} == "$1" ]] && SRCS_ORDER["$e"]="$1" && continue #snapshots get the same UUID. Continue to avoid duplicate entries!
+        local e=''
+        for e in "${!_order[@]}"; do
+            [[ ${_order[$e]} == "$1" ]] && order["$e"]="$1" && continue #snapshots get the same UUID. Continue to avoid duplicate entries!
+        done
+
+        local e=''
+        for e in "${!_order_lvm[@]}"; do
+            [[ ${_order_lvm[$e]} == "$1" ]] && order_lvm["$e"]="$1" && continue #snapshots get the same UUID. Continue to avoid duplicate entries!
         done
     }
 
@@ -895,8 +912,9 @@ init_srcs() { #{{{
                 _update_order "$UUID" #TODO On backup restore, SRCS_ORDER is read from context
             fi
             SRCS[$UUID]="${NAME}:${FSTYPE:- }:${PARTUUID:- }:${PARTTYPE:- }:${TYPE:- }:${MOUNTPOINT:- }:${used:- }:${size:- }"
-        done < <(echo "$file" | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member)\"/ {print $1}" | sort -u -b -k1,1)
-        SRCS_ORDER=(${SRCS_ORDER[@]})
+        done < <(echo "$file" | gawk "! /PARTTYPE=\"($ID_DOS_LVM|$ID_DOS_EXT)\"/ && ! /TYPE=\"(disk|crypt)\"/ && ! /FSTYPE=\"(crypto_LUKS|LVM2_member)\"/ {print \$0}" | sort -u -b -k1,1 | sed '/^$/d')
+        SRCS_ORDER=(${order[@]})
+        SRCS_ORDER+=(${order_lvm[@]})
     };_ #}}}
 
     _(){ #{{{
